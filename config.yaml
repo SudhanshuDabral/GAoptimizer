@@ -1,0 +1,15 @@
+cookie:
+  expiry_days: 30
+  key: some_signature_key
+  name: streamlit_auth
+credentials:
+  usernames:
+    sudhanshu:
+      email: sudhanshudabral1@gmail.com
+      id: 2428cea7-1ed9-4b13-96e5-6d171e775fa3
+      is_active: true
+      is_admin: true
+      name: Sudhanshu Dabral
+      password: $2b$12$NL.WE1q6oz1ofGZh4yvVoey447wlJz8KtBV0x4r9uuskpsH.vSrTG
+preauthorized:
+  emails: []
