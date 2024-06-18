@@ -16,6 +16,11 @@ def initialize_state():
         st.session_state.result = None
 
 def main():
+    
+    if 'authenticated' not in st.session_state or not st.session_state['authenticated']:
+        st.warning("Please login to access this page.")
+        st.stop()
+
     initialize_state()
     st.title("Genetic Algorithm Optimizer for Regression Models (GA-ORM)")
 

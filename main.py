@@ -28,6 +28,8 @@ def initialize_state():
         st.session_state.is_active = False
     if 'page' not in st.session_state:
         st.session_state.page = "GA Optimizer"
+    if 'access' not in st.session_state:
+        st.session_state.access = []
 
 def load_config():
     users = fetch_all_users()
@@ -145,13 +147,14 @@ def navigation():
             st.warning("You do not have permission to access this page.")
 
 def logout():
-    stauth.Authenticate.logout("Logout", "sidebar")
+    authenticator.logout("Logout", "sidebar")
     st.session_state.authenticated = False
     st.session_state.username = ""
     st.session_state.name = ""
     st.session_state.is_admin = False
     st.session_state.is_active = False
     st.session_state.user_id = None
+    st.session_state.access = []
     st.rerun()
 
 def main():
