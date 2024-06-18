@@ -132,3 +132,36 @@ def call_insert_arrays_data(data_id, arrays_data, user_id):
     except Exception as error:
         print(f"Error performing bulk insert: {error}")
         return {'status': 'error', 'message': str(error)}
+
+#fuction to fetch well details
+def get_well_details():
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT well_id, well_name, well_api, latitude, longitude, tvd, reservoir_pressure FROM well_master")
+        well_details = cur.fetchall()
+        cur.close()
+        conn.close()
+        return well_details
+    except Exception as error:
+        print(f"Error fetching well details: {error}")
+        return []
+
+# Function to fetch data for modeling
+def get_modeling_data(well_id):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, total_slurry_dp, median_slurry, stage
+            FROM data_for_modeling
+            WHERE well_id = %s
+            ORDER BY stage ASC
+        """, (well_id,))
+        modeling_data = cur.fetchall()
+        cur.close()
+        conn.close()
+        return modeling_data
+    except Exception as error:
+        print(f"Error fetching modeling data: {error}")
+        return []
