@@ -131,7 +131,7 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
 
                 # Calculate errors for individual data points
                 y_pred = model.predict(X_poly[:, selected_features])
-                errors = y - y_pred
+                errors = (y - y_pred)**2
                 errors_df = pd.DataFrame({
                     'Actual': y,
                     'Predicted': y_pred,

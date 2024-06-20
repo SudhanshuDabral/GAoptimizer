@@ -19,11 +19,14 @@ def initialize_state():
         st.session_state.edited_df = None
     if 'zscored_df' not in st.session_state:
         st.session_state.zscored_df = None
+    if 'excluded_rows' not in st.session_state:
+        st.session_state.excluded_rows = []
 
 def main():
     if 'authenticated' not in st.session_state or not st.session_state['authenticated']:
         st.warning("Please login to access this page.")
         st.stop()
+
 
     initialize_state()
     st.title("Genetic Algorithm Optimizer for Regression Models (GA-ORM)")
@@ -44,14 +47,16 @@ def main():
     df = df.sort_values(by='stage').drop(columns=['stage'])
     df['Productivity'] = ""
 
-    st.write("Data Preview (You can edit the Productivity column):")
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.write("Data Preview (You can edit the Productivity column):")
 
     gb = GridOptionsBuilder.from_dataframe(df)
     gb.configure_column("Productivity", editable=True)
     for col in df.columns:
         if col != "Productivity":
             gb.configure_column(col, editable=False)
-    gb.configure_grid_options(domLayout='autoHeight', suppressMovableColumns=True, enableRangeSelection=True, clipboardDelimiter=',')
+    gb.configure_grid_options(domLayout='normal', suppressMovableColumns=True, enableRangeSelection=True, clipboardDelimiter=',')
 
     grid_options = gb.build()
 
@@ -67,19 +72,38 @@ def main():
     edited_df = pd.DataFrame(grid_response['data'])
     st.session_state.edited_df = edited_df
 
-    # Z-Score Data button
-    if st.button("Z-Score Data"):
-        if edited_df['Productivity'].isnull().any() or (edited_df['Productivity'] == "").any():
-            st.error("Please ensure all values in the 'Productivity' column are filled.")
-        else:
-            zscored_df = zscore_data(edited_df)
-            st.session_state.zscored_df = zscored_df
-            st.success("Data has been Z-Scored.")
+    with col2:
+        if st.button("Z-Score Data"):
+            if edited_df['Productivity'].isnull().any() or (edited_df['Productivity'] == "").any():
+                st.error("Please ensure all values in the 'Productivity' column are filled.")
+            else:
+                zscored_df = zscore_data(edited_df)
+                st.session_state.zscored_df = zscored_df
+                st.success("Data has been Z-Scored.")
 
     # Display Z-Scored Data if available
     if st.session_state.zscored_df is not None:
         st.write("Z-Scored Data Preview:")
-        st.dataframe(st.session_state.zscored_df, use_container_width=True, hide_index=True)
+
+        # Add selection options to exclude rows
+        gb = GridOptionsBuilder.from_dataframe(st.session_state.zscored_df)
+        gb.configure_selection('multiple', use_checkbox=True)
+        grid_options = gb.build()
+
+        grid_response = AgGrid(
+            st.session_state.zscored_df,
+            gridOptions=grid_options,
+            update_mode=GridUpdateMode.SELECTION_CHANGED,
+            fit_columns_on_grid_load=True,
+            height=400,
+            allow_unsafe_jscode=True,
+        )
+
+        selected_rows = pd.DataFrame(grid_response['selected_rows'])
+        st.session_state.excluded_rows = selected_rows.index.tolist()
+
+        st.write("Selected rows to exclude from GA optimization:")
+        st.dataframe(selected_rows, use_container_width=True, hide_index=True)
 
     # Column selection
     drop_columns = st.multiselect("Select Columns to Drop", [col for col in df.columns if col != 'Productivity'])
@@ -108,7 +132,7 @@ def main():
             st.rerun()
 
     if st.session_state.running:
-        start_ga_optimization(st.session_state.zscored_df, 'Productivity', predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size)
+        start_ga_optimization(st.session_state.zscored_df, 'Productivity', predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, st.session_state.excluded_rows)
 
     # Display results if available
     if st.session_state.result:
@@ -118,11 +142,30 @@ def main():
         st.write("Response Equation:", response_equation)
         st.write("Selected Features:", selected_feature_names)
         st.write("Error Table for Individual Data Points:")
-        st.write(errors_df)
+        st.dataframe(errors_df, use_container_width=True, hide_index=True)
 
-def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size):
+        # Add download button for results
+        
+        with pd.ExcelWriter('genetic_algorithm_results.xlsx') as writer:
+            pd.DataFrame([best_ind]).to_excel(writer, sheet_name='Best Individual')
+            pd.DataFrame([{'R² Score': best_r2_score}]).to_excel(writer, sheet_name='R2 Score')
+            pd.DataFrame([{'Response Equation': response_equation}]).to_excel(writer, sheet_name='Response Equation')
+            pd.DataFrame(selected_feature_names, columns=['Selected Features']).to_excel(writer, sheet_name='Selected Features')
+            errors_df.to_excel(writer, sheet_name='Errors')
+        st.success("Results saved as 'genetic_algorithm_results.xlsx'.")
+        st.download_button(
+            label="Download GA Results",
+            data=open('genetic_algorithm_results.xlsx', 'rb').read(),
+            file_name='genetic_algorithm_results.xlsx',
+            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, excluded_rows):
     # Convert all columns to numeric to avoid type issues
     df = df.apply(pd.to_numeric, errors='coerce')
+
+
+    # Exclude selected rows
+    df = df.drop(excluded_rows)
 
     start_time = time.time()
     timer_placeholder = st.empty()
@@ -141,14 +184,14 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
 
     st.session_state.running = False
     st.rerun()
-
+    
 def zscore_data(df):
     for column in df.columns:
-        df[column] = pd.to_numeric(df[column], errors='coerce')  # Convert to numeric and coerce errors to NaN
+        df[column] = pd.to_numeric(df[column], errors='coerce') # Convert to numeric and coerce errors to NaN
         col_mean = df[column].mean()
-        col_std = df[column].std(ddof=1)  # Sample standard deviation
+        col_std = df[column].std(ddof=1) # Sample standard deviation
         df[column] = (df[column] - col_mean) / col_std
     return df
 
-if __name__ == "__main__":
+if __name__ == "main":
     main()
