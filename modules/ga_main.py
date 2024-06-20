@@ -21,6 +21,9 @@ def initialize_state():
         st.session_state.zscored_df = None
     if 'excluded_rows' not in st.session_state:
         st.session_state.excluded_rows = []
+    # if 'highlight_indexes' not in st.session_state:
+    #     st.session_state.highlight_indexes = []
+
 
 def main():
     if 'authenticated' not in st.session_state or not st.session_state['authenticated']:
@@ -44,7 +47,7 @@ def main():
 
     # Display the fetched data in a table
     df = pd.DataFrame(data)
-    df = df.sort_values(by='stage').drop(columns=['stage'])
+    df = df.sort_values(by='stage')
     df['Productivity'] = ""
 
     col1, col2 = st.columns([3, 1])
@@ -88,6 +91,20 @@ def main():
         # Add selection options to exclude rows
         gb = GridOptionsBuilder.from_dataframe(st.session_state.zscored_df)
         gb.configure_selection('multiple', use_checkbox=True)
+        
+        # Highlight rows with top 5 error values using JSCode
+        # if st.session_state.highlight_indexes:
+        #     js_code = JsCode(f"""
+        #     function(params) {{
+        #         const stages = [{",".join(map(str, st.session_state.highlight_indexes))}];
+        #         if (stages.includes(params.data.stage)) {{
+        #             return {{'backgroundColor': '#CF6679'}};  // Change this to your desired hex color
+        #         }}
+        #         return {{}};
+        #     }};
+        #     """)
+        #     gb.configure_grid_options(getRowStyle=js_code)
+
         grid_options = gb.build()
 
         grid_response = AgGrid(
@@ -106,8 +123,8 @@ def main():
         st.dataframe(selected_rows, use_container_width=True, hide_index=True)
 
     # Column selection
-    drop_columns = st.multiselect("Select Columns to Drop", [col for col in df.columns if col != 'Productivity'])
-    predictors = [col for col in df.columns if col != 'Productivity' and col not in drop_columns]
+    drop_columns = st.multiselect("Select Columns to Drop", [col for col in df.columns if col not in ['Productivity', 'stage']])
+    predictors = [col for col in df.columns if col not in ['Productivity', 'stage'] and col not in drop_columns]
 
     # Model parameters
     r2_threshold = st.number_input("R² Threshold", min_value=0.0, max_value=1.0, value=0.55)
@@ -123,7 +140,6 @@ def main():
         if st.button("Start GA Optimization", key="start_button", disabled=st.session_state.running):
             with st.spinner('Running Genetic Algorithm...'):
                 st.session_state.running = True
-                st.session_state.edited_df = edited_df
                 st.rerun()
 
     with col2:
@@ -163,9 +179,10 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
     # Convert all columns to numeric to avoid type issues
     df = df.apply(pd.to_numeric, errors='coerce')
 
-
     # Exclude selected rows
     df = df.drop(excluded_rows)
+
+    # print(df)
 
     start_time = time.time()
     timer_placeholder = st.empty()
@@ -179,19 +196,22 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
     if result:
         best_ind, best_r2_score, response_equation, selected_feature_names, errors_df = result
         st.session_state.result = (best_ind, best_r2_score, response_equation, selected_feature_names, errors_df)
+        # Store indexes of top 5 error rows
+        # st.session_state.highlight_indexes = errors_df.nlargest(3, 'Error')['stage'].tolist()
     else:
         st.session_state.result = None
 
     st.session_state.running = False
     st.rerun()
-    
+
 def zscore_data(df):
     for column in df.columns:
-        df[column] = pd.to_numeric(df[column], errors='coerce') # Convert to numeric and coerce errors to NaN
-        col_mean = df[column].mean()
-        col_std = df[column].std(ddof=1) # Sample standard deviation
-        df[column] = (df[column] - col_mean) / col_std
+        if column != 'stage':  # Exclude stage from zscoring
+            df[column] = pd.to_numeric(df[column], errors='coerce') # Convert to numeric and coerce errors to NaN
+            col_mean = df[column].mean()
+            col_std = df[column].std(ddof=1) # Sample standard deviation
+            df[column] = (df[column] - col_mean) / col_std
     return df
 
-if __name__ == "main":
+if __name__ == "__main__":
     main()

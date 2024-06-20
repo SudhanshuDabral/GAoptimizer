@@ -133,6 +133,7 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
                 y_pred = model.predict(X_poly[:, selected_features])
                 errors = (y - y_pred)**2
                 errors_df = pd.DataFrame({
+                    'stage': df['stage'],  # Include the stage column
                     'Actual': y,
                     'Predicted': y_pred,
                     'Error': errors
