@@ -98,7 +98,7 @@ def main():
             # Show the consolidated results in a table
             if 'consolidated_output' in st.session_state:
                 st.subheader("Data for Modelling")
-                st.dataframe(st.session_state['consolidated_output'], use_container_width=True)
+                st.dataframe(st.session_state['consolidated_output'], use_container_width=True, hide_index=True)
 
             # Add a button to save data in DB
             if st.button("Save Data in DB"):
@@ -243,10 +243,6 @@ def process_files(files, well_details):
     # Save the consolidated results in session state
     st.session_state['consolidated_output'] = all_results
 
-    # Show the consolidated results in a table
-    st.subheader("Data for Modeling")
-    st.dataframe(all_results, use_container_width=True)
-
     # Hide the progress bar
     progress_bar.empty()
     progress_text.empty()
@@ -287,20 +283,37 @@ def save_data_in_db(well_details, consolidated_output, user_id):
 
         arrays_file_path = os.path.join('export', str(user_id), f'{stage}_arrays.csv')
         if os.path.exists(arrays_file_path):
-            arrays_data = pd.read_csv(arrays_file_path).to_dict(orient='records')
+            arrays_data = pd.read_csv(arrays_file_path)
+
+            # Find the index of the last non-zero row
+            last_non_zero_index = arrays_data.ne(0).any(axis=1)[::-1].idxmax()
+
+            # Filter out the rows from the last non-zero row to the end if they are all zero
+            arrays_data_filtered = arrays_data.loc[:last_non_zero_index].reset_index(drop=True)
 
             # Update the progress bar
             progress_bar.progress((i + 1) / len(data_ids))
             progress_text.text(f"Inserting arrays data for stage {stage}")
 
+            # Convert the filtered DataFrame to a list of dictionaries
+            arrays_data_filtered_dict = arrays_data_filtered.to_dict(orient='records')
+
             # Call the function to insert arrays data
-            stage_summary = call_insert_arrays_data(data_id, arrays_data, user_id)
-            arrays_summary.append({'stage': stage, 'records_added': stage_summary['records_added']})
+            stage_summary = call_insert_arrays_data(data_id, arrays_data_filtered_dict, user_id)
+            
+            # Check the status of the insertion and handle accordingly
+            if stage_summary['status'] == 'success':
+                arrays_summary.append({'stage': stage, 'records_added': stage_summary['records_added']})
+            else:
+                st.error(f"Failed to insert arrays data for stage {stage}: {stage_summary['message']}")
 
     # Display consolidated arrays data insertion summary
     st.subheader("Arrays Data Insertion Summary")
-    for summary in arrays_summary:
-        st.write(f"Stage {summary['stage']}: {summary['records_added']} records added")
+    if arrays_summary:
+        summary_df = pd.DataFrame(arrays_summary)
+        st.dataframe(summary_df, use_container_width=True,hide_index=True)
+    else:
+        st.write("No data inserted.")
 
     # Cleanup: Remove the user-specific directory
     user_dir = os.path.join('export', str(user_id))
@@ -308,6 +321,7 @@ def save_data_in_db(well_details, consolidated_output, user_id):
         for file in os.listdir(user_dir):
             os.remove(os.path.join(user_dir, file))
         os.rmdir(user_dir)
+
 
 if __name__ == "__main__":
     main()

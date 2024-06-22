@@ -106,6 +106,9 @@ def call_insert_arrays_data(data_id, arrays_data, user_id):
         conn = get_db_connection()
         cur = conn.cursor()
 
+        # # Delete existing records for the given data_id
+        cur.execute("DELETE FROM arrays WHERE data_id = %s", (data_id,))
+
         # Convert arrays data to list of tuples for bulk insert
         arrays_data_tuples = []
         for row in arrays_data:
