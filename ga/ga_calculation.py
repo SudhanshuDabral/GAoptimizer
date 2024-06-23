@@ -12,13 +12,21 @@ from utils import plotting
 
 warnings.filterwarnings('ignore')
 
-def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, timer_placeholder):
+def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, timer_placeholder, regression_type):
     X = df[predictors].values
     y = df[target_column].values
 
     poly = PolynomialFeatures(degree=2, include_bias=False)
     X_poly = poly.fit_transform(X)
-    poly_feature_names = poly.get_feature_names_out(df[predictors].columns)
+    feature_names = poly.get_feature_names_out(df[predictors].columns)
+
+    if regression_type == 'LWIP':
+        # Identify quadratic terms
+        quadratic_indices = [i for i, name in enumerate(feature_names) if '^2' in name]
+        
+        # Remove quadratic terms
+        X_poly = np.delete(X_poly, quadratic_indices, axis=1)
+        feature_names = [name for i, name in enumerate(feature_names) if i not in quadratic_indices]
 
     X_train, X_test, y_train, y_test = train_test_split(X_poly, y, test_size=0.2, random_state=42)
 
@@ -93,7 +101,7 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
 
         if best_r2_score >= r2_threshold:
             selected_features = [i for i, bit in enumerate(best_ind) if bit == 1]
-            selected_feature_names = [poly_feature_names[i] for i in selected_features]
+            selected_feature_names = [feature_names[i] for i in selected_features]
             
             X_train_sub = X_train[:, selected_features]
             X_test_sub = X_test[:, selected_features]
@@ -109,7 +117,14 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
             if valid_coefficients:
                 equation = f"Corrected_Prod = {intercept:.4f}"
                 for coef, feature in zip(coefficients, selected_feature_names):
-                    equation += f" + ({coef:.4f} * {feature})"
+                    if '^2' in feature:
+                        feature_base, power = feature.split('^')
+                        equation += f" + ({coef:.4f} * {feature_base} * {feature_base})"
+                    elif ':' in feature:
+                        f1, f2 = feature.split(':')
+                        equation += f" + ({coef:.4f} * {f1} * {f2})"
+                    else:
+                        equation += f" + ({coef:.4f} * {feature})"
                 
                 results = {
                     'Selected Features': selected_feature_names,
