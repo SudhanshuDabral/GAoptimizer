@@ -256,8 +256,13 @@ def main():
             )
             
             if custom_equation:
-                equation_to_use = custom_equation
-                st.info("Using the custom equation for monotonicity check.")
+                is_valid, validation_message = validate_custom_equation(custom_equation)
+                if is_valid:
+                    equation_to_use = custom_equation
+                    st.success("Custom equation is valid and will be used for the monotonicity check.")
+                else:
+                    st.error(f"Invalid custom equation: {validation_message}")
+                    equation_to_use = None
             else:
                 st.warning("Please enter a custom equation or uncheck the 'Use custom equation' box.")
                 equation_to_use = None
@@ -265,6 +270,10 @@ def main():
             equation_to_use = response_equation
             st.info(f"Using the equation from GA optimization: {equation_to_use}")
 
+        # Add this part to display the equation being used
+        if equation_to_use:
+            st.write("Equation being used for monotonicity check:")
+            st.code(equation_to_use)
 
         # Add button for checking monotonicity
         if st.button("Check Monotonicity"):
@@ -360,43 +369,43 @@ def calculate_df_statistics(df):
     return stats
 
 # function to validate custom equation
-# def validate_custom_equation(equation):
-#     valid_features = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 'total_slurry_dp', 'median_slurry']
+def validate_custom_equation(equation):
+    valid_features = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 'total_slurry_dp', 'median_slurry']
     
-#     # Check if equation starts with "Corrected_Prod ="
-#     if not equation.strip().startswith("Corrected_Prod ="):
-#         return False, "Equation must start with 'Corrected_Prod ='"
+    # Check if equation starts with "Corrected_Prod ="
+    if not equation.strip().startswith("Corrected_Prod ="):
+        return False, "Equation must start with 'Corrected_Prod ='"
     
-#     # Remove "Corrected_Prod =" from the equation for further processing
-#     equation = equation.replace("Corrected_Prod =", "").strip()
+    # Remove "Corrected_Prod =" from the equation for further processing
+    equation = equation.replace("Corrected_Prod =", "").strip()
     
-#     # Replace feature names with placeholder variables
-#     for feature in valid_features:
-#         equation = re.sub(r'\b' + feature + r'\b', 'x', equation)
+    # Check for valid features
+    for feature in valid_features:
+        equation = equation.replace(feature, "x")
     
-#     # Handle squared terms
-#     equation = re.sub(r'(\w+)\^2', r'\1 * \1', equation)
+    # Replace ^2 with **2 for proper Python syntax
+    equation = equation.replace("^2", "**2")
     
-#     # Remove all spaces
-#     equation = equation.replace(" ", "")
+    # Remove all spaces
+    equation = equation.replace(" ", "")
     
-#     # Check for valid characters
-#     valid_chars = set('x+-*/().')
-#     if not all(char in valid_chars for char in equation):
-#         return False, "Equation contains invalid characters"
+    # Check for valid characters
+    valid_chars = set('x+-*/().**0123456789')
+    if not all(char in valid_chars for char in equation):
+        return False, "Equation contains invalid characters"
     
-#     # Check for balanced parentheses
-#     if equation.count('(') != equation.count(')'):
-#         return False, "Unbalanced parentheses in equation"
+    # Check for balanced parentheses
+    if equation.count('(') != equation.count(')'):
+        return False, "Unbalanced parentheses in equation"
     
-#     # Try to evaluate the equation
-#     try:
-#         x = 1  # Dummy value for testing
-#         eval(equation)
-#     except:
-#         return False, "Invalid equation structure"
+    # Try to evaluate the equation
+    try:
+        x = 1  # Dummy value for testing
+        eval(equation)
+    except Exception as e:
+        return False, f"Invalid equation structure: {str(e)}"
     
-#     return True, "Equation is valid"
+    return True, "Equation is valid"
 
 if __name__ == "__main__":
     main()
