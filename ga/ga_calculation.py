@@ -82,7 +82,7 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
 
     while (best_r2_score < r2_threshold or not valid_coefficients) and st.session_state.running:
         iteration += 1
-        print(f"Iteration: {iteration}")
+        # print(f"Iteration: {iteration}")
         pop = toolbox.population(n=population_size)
         
         algorithms.eaSimple(pop, toolbox, prob_crossover, prob_mutation, num_generations, verbose=True)
@@ -117,14 +117,19 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
             if valid_coefficients:
                 equation = f"Corrected_Prod = {intercept:.4f}"
                 for coef, feature in zip(coefficients, selected_feature_names):
-                    if '^2' in feature:
-                        feature_base, power = feature.split('^')
-                        equation += f" + ({coef:.4f} * {feature_base} * {feature_base})"
-                    elif ':' in feature:
-                        f1, f2 = feature.split(':')
-                        equation += f" + ({coef:.4f} * {f1} * {f2})"
+                    terms = feature.split()
+                    if len(terms) == 1:
+                        # Linear term
+                        equation += f" + ({coef:.4f} * {terms[0]})"
+                    elif len(terms) == 2:
+                        # Interaction term
+                        equation += f" + ({coef:.4f} * {terms[0]} * {terms[1]})"
+                    elif len(terms) == 3 and terms[1] == terms[2]:
+                        # Quadratic term
+                        equation += f" + ({coef:.4f} * {terms[0]} * {terms[0]})"
                     else:
-                        equation += f" + ({coef:.4f} * {feature})"
+                        # Higher order interaction, join all terms with *
+                        equation += f" + ({coef:.4f} * {' * '.join(terms)})"
                 
                 results = {
                     'Selected Features': selected_feature_names,
@@ -138,8 +143,8 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
                 output_file = 'genetic_algorithm_results.xlsx'
                 results_df.to_excel(output_file, index=False)
                 
-                print("Best individual is %s, with R² score of %s" % (best_ind, best_r2_score))
-                print("Response Equation:", equation)
+                # print("Best individual is %s, with R² score of %s" % (best_ind, best_r2_score))
+                # print("Response Equation:", equation)
 
                 equation_placeholder.write(f"Response Equation: {equation}")
                 selected_features_placeholder.write(f"Selected Features: {selected_feature_names}")

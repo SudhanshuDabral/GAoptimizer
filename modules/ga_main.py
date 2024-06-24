@@ -3,11 +3,13 @@ import pandas as pd
 import sys
 import os
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
-from utils.db import get_well_details, get_modeling_data
+from utils.db import get_well_details, get_modeling_data, get_well_stages, get_array_data
 
 # Add the parent directory to the Python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import ga.ga_calculation as ga_calculation
+from ga.check_monotonicity import check_monotonicity as check_monotonicity_func
+from utils.plotting import plot_column
 import time
 
 def initialize_state():
@@ -25,6 +27,8 @@ def initialize_state():
         st.session_state.show_zscore_tab = False
     if 'regression_type' not in st.session_state:
         st.session_state.regression_type = 'FPR'
+    if 'monotonicity_results' not in st.session_state:
+            st.session_state.monotonicity_results = None
 
 def main():
     if 'authenticated' not in st.session_state or not st.session_state['authenticated']:
@@ -75,6 +79,8 @@ def main():
 
         edited_df = pd.DataFrame(grid_response['data'])
         st.session_state.edited_df = edited_df
+        # Calculate and store statistics
+        st.session_state.df_statistics = calculate_df_statistics(edited_df)
 
         if st.button("Z-Score Data"):
             if edited_df['Productivity'].isnull().any() or (edited_df['Productivity'] == "").any():
@@ -225,6 +231,71 @@ def main():
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
 
+        # New section for checking monotonicity
+        st.subheader("Check Monotonicity")
+
+        # Get well details and create dropdown
+        wells = get_well_details()
+        well_options = {well['well_name']: well['well_id'] for well in wells}
+        selected_well = st.selectbox("Select a Well", options=list(well_options.keys()), key="monotonicity_well_select")
+        well_id = well_options[selected_well]
+
+        # Get stages for selected well and create dropdown
+        stages = get_well_stages(well_id)
+        selected_stage = st.selectbox("Select a Stage", options=stages, key="monotonicity_stage_select")
+
+        # Add button for checking monotonicity
+        if st.button("Check Monotonicity"):
+            # Fetch array data
+            array_data = get_array_data(well_id, selected_stage)
+            if array_data:
+                # Convert array_data to DataFrame if it's not already
+                if not isinstance(array_data, pd.DataFrame):
+                    array_data = pd.DataFrame(array_data)
+
+                # Perform monotonicity check
+                result_df = check_monotonicity_func(array_data, st.session_state.df_statistics, response_equation)
+
+                # Store results in session state
+                st.session_state.monotonicity_results = result_df
+                st.success("Monotonicity check completed successfully!")
+            else:
+                st.error("No array data found for the selected well and stage.")
+                
+        # Display results if available
+        if st.session_state.monotonicity_results is not None:
+            st.subheader("Monotonicity Check Results")
+            st.write(f"Total rows: {len(st.session_state.monotonicity_results)}")
+            st.dataframe(st.session_state.monotonicity_results, use_container_width=True, height=400)
+
+            # Option to download the results
+            csv = st.session_state.monotonicity_results.to_csv(index=False)
+            st.download_button(
+                label="Download Monotonicity Results",
+                data=csv,
+                file_name=f"monotonicity_results_well_{selected_well}_stage_{selected_stage}.csv",
+                mime="text/csv",
+            )
+
+            st.subheader("Plot Monotonicity Results")
+
+            # Multi-select dropdown for column selection
+            plot_columns = st.multiselect(
+                "Select columns to plot",
+                options=st.session_state.monotonicity_results.columns.tolist(),
+                default=["Productivity"]
+            )
+
+            # Plot each selected column
+            for column in plot_columns:
+                st.plotly_chart(plot_column(st.session_state.monotonicity_results, column))
+        else:
+            st.info("Run the monotonicity check to see results and plots.")
+
+                
+        
+
+
 def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, excluded_rows, regression_type):
     df = df.apply(pd.to_numeric, errors='coerce')
     df = df.drop(excluded_rows)
@@ -254,6 +325,18 @@ def zscore_data(df):
             col_std = df[column].std(ddof=1)
             df[column] = (df[column] - col_mean) / col_std
     return df
+
+# function to calculate statistics for the original data for modelling 
+def calculate_df_statistics(df):
+    columns_to_process = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 'total_slurry_dp', 'median_slurry']
+    stats = {}
+    for col in columns_to_process:
+        if col in df.columns:
+            stats[col] = {
+                'mean': df[col].mean(),
+                'std': df[col].std(ddof=1)
+            }
+    return stats
 
 if __name__ == "__main__":
     main()

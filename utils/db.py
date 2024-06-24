@@ -168,3 +168,33 @@ def get_modeling_data(well_id):
     except Exception as error:
         print(f"Error fetching modeling data: {error}")
         return []
+
+# function to get stages for a well    
+def get_well_stages(well_id):
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("""
+        SELECT DISTINCT stage
+        FROM data_for_modeling
+        WHERE well_id = %s
+        ORDER BY stage
+    """, (well_id,))
+    stages = [row['stage'] for row in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return stages
+
+#function to get array data for given well and stage
+def get_array_data(well_id, stage):
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("""
+        SELECT a.slr_win, a.pmaxmin_win, a.downhole_win_prop
+        FROM arrays a
+        JOIN data_for_modeling d ON a.data_id = d.data_id
+        WHERE d.well_id = %s AND d.stage = %s
+    """, (well_id, stage))
+    array_data = cur.fetchall()  # Fetch all rows instead of just one
+    cur.close()
+    conn.close()
+    return array_data
