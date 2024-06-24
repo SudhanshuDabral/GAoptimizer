@@ -4,6 +4,7 @@ import sys
 import os
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from utils.db import get_well_details, get_modeling_data, get_well_stages, get_array_data
+import re
 
 # Add the parent directory to the Python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -244,24 +245,48 @@ def main():
         stages = get_well_stages(well_id)
         selected_stage = st.selectbox("Select a Stage", options=stages, key="monotonicity_stage_select")
 
+        # Custom equation input
+        use_custom_equation = st.checkbox("Use custom equation")
+
+        if use_custom_equation:
+            custom_equation = st.text_area(
+                "Enter custom equation", 
+                placeholder="Corrected_Prod = ... (use only tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, total_slurry_dp, median_slurry)",
+                height=100
+            )
+            
+            if custom_equation:
+                equation_to_use = custom_equation
+                st.info("Using the custom equation for monotonicity check.")
+            else:
+                st.warning("Please enter a custom equation or uncheck the 'Use custom equation' box.")
+                equation_to_use = None
+        else:
+            equation_to_use = response_equation
+            st.info(f"Using the equation from GA optimization: {equation_to_use}")
+
+
         # Add button for checking monotonicity
         if st.button("Check Monotonicity"):
-            # Fetch array data
-            array_data = get_array_data(well_id, selected_stage)
-            if array_data:
-                # Convert array_data to DataFrame if it's not already
-                if not isinstance(array_data, pd.DataFrame):
-                    array_data = pd.DataFrame(array_data)
-
-                # Perform monotonicity check
-                result_df = check_monotonicity_func(array_data, st.session_state.df_statistics, response_equation)
-
-                # Store results in session state
-                st.session_state.monotonicity_results = result_df
-                st.success("Monotonicity check completed successfully!")
+            if equation_to_use is None:
+                st.error("Please provide a valid equation before checking monotonicity.")
             else:
-                st.error("No array data found for the selected well and stage.")
-                
+                # Fetch array data
+                array_data = get_array_data(well_id, selected_stage)
+                if array_data:
+                    # Convert array_data to DataFrame if it's not already
+                    if not isinstance(array_data, pd.DataFrame):
+                        array_data = pd.DataFrame(array_data)
+
+                    # Perform monotonicity check
+                    result_df = check_monotonicity_func(array_data, st.session_state.df_statistics, equation_to_use)
+
+                    # Store results in session state
+                    st.session_state.monotonicity_results = result_df
+                    st.success("Monotonicity check completed successfully!")
+                else:
+                    st.error("No array data found for the selected well and stage.")
+
         # Display results if available
         if st.session_state.monotonicity_results is not None:
             st.subheader("Monotonicity Check Results")
@@ -291,10 +316,6 @@ def main():
                 st.plotly_chart(plot_column(st.session_state.monotonicity_results, column))
         else:
             st.info("Run the monotonicity check to see results and plots.")
-
-                
-        
-
 
 def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, excluded_rows, regression_type):
     df = df.apply(pd.to_numeric, errors='coerce')
@@ -337,6 +358,45 @@ def calculate_df_statistics(df):
                 'std': df[col].std(ddof=1)
             }
     return stats
+
+# function to validate custom equation
+# def validate_custom_equation(equation):
+#     valid_features = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 'total_slurry_dp', 'median_slurry']
+    
+#     # Check if equation starts with "Corrected_Prod ="
+#     if not equation.strip().startswith("Corrected_Prod ="):
+#         return False, "Equation must start with 'Corrected_Prod ='"
+    
+#     # Remove "Corrected_Prod =" from the equation for further processing
+#     equation = equation.replace("Corrected_Prod =", "").strip()
+    
+#     # Replace feature names with placeholder variables
+#     for feature in valid_features:
+#         equation = re.sub(r'\b' + feature + r'\b', 'x', equation)
+    
+#     # Handle squared terms
+#     equation = re.sub(r'(\w+)\^2', r'\1 * \1', equation)
+    
+#     # Remove all spaces
+#     equation = equation.replace(" ", "")
+    
+#     # Check for valid characters
+#     valid_chars = set('x+-*/().')
+#     if not all(char in valid_chars for char in equation):
+#         return False, "Equation contains invalid characters"
+    
+#     # Check for balanced parentheses
+#     if equation.count('(') != equation.count(')'):
+#         return False, "Unbalanced parentheses in equation"
+    
+#     # Try to evaluate the equation
+#     try:
+#         x = 1  # Dummy value for testing
+#         eval(equation)
+#     except:
+#         return False, "Invalid equation structure"
+    
+#     return True, "Equation is valid"
 
 if __name__ == "__main__":
     main()
