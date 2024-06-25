@@ -6,6 +6,8 @@ from streamlit_authenticator.utilities.hasher import Hasher
 import uuid
 import streamlit as st
 import json
+import string
+import secrets
 
 def get_db_connection():
     return psycopg2.connect(
@@ -198,3 +200,128 @@ def get_array_data(well_id, stage):
     cur.close()
     conn.close()
     return array_data
+
+
+
+############functions for Admin Console####################
+
+
+def reset_user_password(user_id, new_password):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        hashed_password = hash_password(new_password)
+        cur.execute("""
+            UPDATE user_master
+            SET password = %s
+            WHERE user_id = %s
+        """, (hashed_password, user_id))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as error:
+        print(f"Error resetting user password: {error}")
+        return False
+
+def toggle_user_status(user_id):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE user_master
+            SET is_active = NOT is_active
+            WHERE user_id = %s
+            RETURNING is_active
+        """, (user_id,))
+        new_status = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        conn.close()
+        return new_status
+    except Exception as error:
+        print(f"Error toggling user status: {error}")
+        return None
+    
+    
+# Function to update user information
+def update_user_info(user_id, updated_info):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE user_master
+            SET username = %s, email = %s, name = %s, is_admin = %s
+            WHERE user_id = %s
+        """, (updated_info['username'], updated_info['email'], updated_info['name'], updated_info['is_admin'], user_id))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as error:
+        print(f"Error updating user information: {error}")
+        return False
+    
+# Function to fetch all users and their access rights
+def update_user_access(user_id, access_list):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # First, remove all existing access for the user
+        cur.execute("DELETE FROM access_control WHERE user_id = %s", (user_id,))
+        
+        # Then, insert new access rights
+        for page in access_list:
+            cur.execute("""
+                INSERT INTO access_control (user_id, page_name, updated_by)
+                VALUES (%s, %s, %s)
+            """, (user_id, page, user_id))  # Assuming the user updating is the same as the user being updated
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as error:
+        print(f"Error updating user access: {error}")
+        return False
+    
+
+# Function to generate a random password
+def generate_random_password(length=12):
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for i in range(length))
+
+
+# Function to create a new user
+def create_user(username, email, name, password, is_admin, access_list):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Hash the password
+        hashed_password = hash_password(password)
+        
+        # Insert new user
+        cur.execute("""
+            INSERT INTO user_master (username, email, name, password, is_admin)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING user_id
+        """, (username, email, name, hashed_password, is_admin))
+        
+        user_id = cur.fetchone()[0]
+        
+        # Insert user access rights
+        for page in access_list:
+            cur.execute("""
+                INSERT INTO access_control (user_id, page_name, updated_by)
+                VALUES (%s, %s, %s)
+            """, (user_id, page, user_id))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as error:
+        print(f"Error creating user: {error}")
+        return False
