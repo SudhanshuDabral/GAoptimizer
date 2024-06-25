@@ -28,7 +28,7 @@ def plot_r2_vs_iteration():
 
     st.plotly_chart(fig, use_container_width=True)
 
-def plot_column(df, column_name):
+def plot_column(df, column_name, stage):
     """
     Create a line plot for a specific column in the DataFrame.
     
@@ -37,7 +37,6 @@ def plot_column(df, column_name):
     :return: plotly Figure object
     """
     fig = go.Figure()
-    
     fig.add_trace(go.Scatter(
         x=df.index,
         y=df[column_name],
@@ -46,11 +45,10 @@ def plot_column(df, column_name):
     ))
     
     fig.update_layout(
-        title=f'{column_name} vs Index',
+        title=f'{column_name} for Stage {stage}',
         xaxis_title='Index',
         yaxis_title=column_name,
-        height=600,
-        width=800
+        height=500,  # Fixed height for consistency
     )
     
     return fig
