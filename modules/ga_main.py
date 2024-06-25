@@ -16,8 +16,8 @@ import time
 def initialize_state():
     if 'running' not in st.session_state:
         st.session_state.running = False
-    if 'result' not in st.session_state:
-        st.session_state.result = None
+    if 'results' not in st.session_state:
+        st.session_state.results = []
     if 'edited_df' not in st.session_state:
         st.session_state.edited_df = None
     if 'zscored_df' not in st.session_state:
@@ -156,7 +156,11 @@ def main():
             min_value=1, value=50,
             help="Set the size of the population for the genetic algorithm."
         )
-        
+        num_models = st.number_input(
+            "Number of Models to Generate",
+            min_value=1, max_value=6, value=3,
+            help="Specify the number of models to generate that meet the R² threshold."
+        )
         # New input for regression type
         regression_type = st.selectbox(
             "Regression Type",
@@ -172,6 +176,7 @@ def main():
         if st.button("Start GA Optimization", key="start_button", disabled=st.session_state.running):
             with st.spinner('Running Genetic Algorithm...'):
                 st.session_state.running = True
+                st.session_state.results = []  # Reset results
                 st.rerun()
 
     with col2:
@@ -180,36 +185,37 @@ def main():
             st.rerun()
 
     if st.session_state.running:
-        start_ga_optimization(st.session_state.zscored_df, 'Productivity', predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, st.session_state.excluded_rows, st.session_state.regression_type)
+        start_ga_optimization(st.session_state.zscored_df, 'Productivity', predictors, r2_threshold, coef_range, 
+                              prob_crossover, prob_mutation, num_generations, population_size, 
+                              st.session_state.excluded_rows, st.session_state.regression_type, num_models)
 
-    if st.session_state.result:
-        best_ind, best_r2_score, response_equation, selected_feature_names, errors_df = st.session_state.result
-        st.success("Genetic Algorithm Optimization Complete!")
+    if st.session_state.results:
+        st.success(f"Genetic Algorithm Optimization Complete! Generated {len(st.session_state.results)} models.")
 
-        # Display R² Score
-        st.subheader("R² Score Achieved")
-        st.code(f"{best_r2_score:.4f}", language='text')
+        for i, result in enumerate(st.session_state.results):
+            best_ind, best_r2_score, response_equation, selected_feature_names, errors_df = result
+            
+            st.subheader(f"Model {i+1}")
+            st.write(f"R² Score: {best_r2_score:.4f}")
+            st.code(response_equation, language='text')
+            
+            with st.expander("Show Details"):
+                st.write("Selected Features:")
+                features_text = "\n".join([f"• {feature}" for feature in selected_feature_names])
+                st.code(features_text, language="markdown")
+                
+                st.write("Error Table for Individual Data Points")
+                st.dataframe(errors_df, use_container_width=True, hide_index=True)
 
-        # Display Response Equation
-        st.subheader("Response Equation")
-        st.code(response_equation, language='text')
-
-        # Display Selected Features
-        st.subheader("Selected Features")
-        features_text = "\n".join([f"• {feature}" for feature in selected_feature_names])
-        st.code(features_text, language="markdown")
-
-        # Display Error Table for Individual Data Points
-        st.subheader("Error Table for Individual Data Points")
-        st.dataframe(errors_df, use_container_width=True, hide_index=True)
 
         # Add download button for results
         with pd.ExcelWriter('genetic_algorithm_results.xlsx') as writer:
-            pd.DataFrame([best_ind]).to_excel(writer, sheet_name='Best Individual')
-            pd.DataFrame([{'R² Score': best_r2_score}]).to_excel(writer, sheet_name='R2 Score')
-            pd.DataFrame([{'Response Equation': response_equation}]).to_excel(writer, sheet_name='Response Equation')
-            pd.DataFrame(selected_feature_names, columns=['Selected Features']).to_excel(writer, sheet_name='Selected Features')
-            errors_df.to_excel(writer, sheet_name='Errors')
+            for i, result in enumerate(st.session_state.results):
+                best_ind, best_r2_score, response_equation, selected_feature_names, errors_df = result
+                pd.DataFrame([best_ind]).to_excel(writer, sheet_name=f'Model_{i+1}_Best_Individual')
+                pd.DataFrame([{'R² Score': best_r2_score, 'Response Equation': response_equation}]).to_excel(writer, sheet_name=f'Model_{i+1}_Details')
+                pd.DataFrame(selected_feature_names, columns=['Selected Features']).to_excel(writer, sheet_name=f'Model_{i+1}_Features')
+                errors_df.to_excel(writer, sheet_name=f'Model_{i+1}_Errors')
 
         with open('genetic_algorithm_results.xlsx', 'rb') as file:
             st.download_button(
@@ -220,7 +226,7 @@ def main():
             )
 
         # New section for checking monotonicity
-        st.subheader("Check Monotonicity")
+        st.markdown("<h1 style='text-align: center;'>Check Monotonicity</h1>", unsafe_allow_html=True)
 
         # Get well details and create dropdown
         wells = get_well_details()
@@ -232,10 +238,15 @@ def main():
         stages = get_well_stages(well_id)
         selected_stages = st.multiselect("Select Stage(s)", options=stages, key="monotonicity_stage_select")
 
-        # Custom equation input
-        use_custom_equation = st.checkbox("Use custom equation")
+        # Model selection for monotonicity check
+        model_options = [f"Model {i+1} (R²: {result[1]:.4f})" for i, result in enumerate(st.session_state.results)]
+        model_options.append("Custom Equation")
+        selected_model = st.selectbox("Select Model for Monotonicity Check", options=model_options)
 
-        if use_custom_equation:
+        # # Custom equation input
+        # use_custom_equation = st.checkbox("Use custom equation")
+
+        if selected_model == "Custom Equation":
             custom_equation = st.text_area(
                 "Enter custom equation", 
                 placeholder="Corrected_Prod = ... (use only tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, total_slurry_dp, median_slurry)",
@@ -251,11 +262,13 @@ def main():
                     st.error(f"Invalid custom equation: {validation_message}")
                     equation_to_use = None
             else:
-                st.warning("Please enter a custom equation or uncheck the 'Use custom equation' box.")
+                st.warning("Please enter a custom equation.")
                 equation_to_use = None
         else:
-            equation_to_use = response_equation
-            st.info(f"Using the equation from GA optimization: {equation_to_use}")
+            model_index = int(selected_model.split()[1]) - 1
+            equation_to_use = st.session_state.results[model_index][2]
+            st.info(f"Using equation from {selected_model}")
+
 
         # Add this part to display the equation being used
         if equation_to_use:
@@ -318,23 +331,25 @@ def main():
         else:
             st.info("Run Monotonicity check to see results.")
 
-def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, excluded_rows, regression_type):
+def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, excluded_rows, regression_type, num_models):
     df = df.apply(pd.to_numeric, errors='coerce')
     df = df.drop(excluded_rows)
     start_time = time.time()
     timer_placeholder = st.empty()
 
-    result = ga_calculation.run_ga(
-        df, target_column, predictors, r2_threshold, coef_range,
-        prob_crossover, prob_mutation, num_generations, population_size,
-        timer_placeholder, regression_type
-    )
+    while len(st.session_state.results) < num_models and st.session_state.running:
+        result = ga_calculation.run_ga(
+            df, target_column, predictors, r2_threshold, coef_range,
+            prob_crossover, prob_mutation, num_generations, population_size,
+            timer_placeholder, regression_type
+        )
 
-    if result:
-        best_ind, best_r2_score, response_equation, selected_feature_names, errors_df = result
-        st.session_state.result = (best_ind, best_r2_score, response_equation, selected_feature_names, errors_df)
-    else:
-        st.session_state.result = None
+        if result:
+            best_ind, best_r2_score, response_equation, selected_feature_names, errors_df = result
+            st.session_state.results.append((best_ind, best_r2_score, response_equation, selected_feature_names, errors_df))
+            st.success(f"Model {len(st.session_state.results)} generated (R²: {best_r2_score:.4f})")
+        else:
+            st.warning("GA optimization did not produce a valid result. Retrying...")
 
     st.session_state.running = False
     st.rerun()
