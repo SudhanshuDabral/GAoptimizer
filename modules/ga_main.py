@@ -261,7 +261,8 @@ def main():
         if equation_to_use:
             st.write("Equation being used for monotonicity check:")
             st.code(equation_to_use)
-
+        
+        # Check monotonicity button and functionality with batch monotonicity check
         if st.button("Check Monotonicity"):
             if equation_to_use is None:
                 st.error("Please provide a valid equation before checking monotonicity.")
@@ -270,18 +271,23 @@ def main():
             else:
                 # Perform batch monotonicity check
                 progress_bar = st.progress(0)
+                status_text = st.empty()
                 results = {}
                 for i, stage in enumerate(selected_stages):
+                    status_text.text(f"Checking monotonicity for Stage {stage}...")
                     array_data = get_array_data(well_id, stage)
                     if array_data is not None:
                         if not isinstance(array_data, pd.DataFrame):
                             array_data = pd.DataFrame(array_data)
                         result_df = check_monotonicity_func(array_data, st.session_state.df_statistics, equation_to_use)
                         results[stage] = result_df
-                        progress_bar.progress((i + 1) / len(selected_stages))
+                    else:
+                        st.warning(f"No data available for Stage {stage}. Skipping...")
+                    progress_bar.progress((i + 1) / len(selected_stages))
 
                 st.session_state.monotonicity_results = results
-                st.success("Monotonicity check completed successfully!")
+                status_text.text("Monotonicity check completed!")
+                st.success(f"Monotonicity check completed successfully for {len(results)} out of {len(selected_stages)} stages.")
 
         # Display results if available
         if 'monotonicity_results' in st.session_state and st.session_state.monotonicity_results:
