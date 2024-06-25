@@ -13,30 +13,28 @@ from utils.plotting import plot_column
 from utils.ga_utils import zscore_data, calculate_df_statistics, validate_custom_equation
 import time
 
-def initialize_state():
-    if 'running' not in st.session_state:
-        st.session_state.running = False
-    if 'results' not in st.session_state:
-        st.session_state.results = []
-    if 'edited_df' not in st.session_state:
-        st.session_state.edited_df = None
-    if 'zscored_df' not in st.session_state:
-        st.session_state.zscored_df = None
-    if 'excluded_rows' not in st.session_state:
-        st.session_state.excluded_rows = []
-    if 'show_zscore_tab' not in st.session_state:
-        st.session_state.show_zscore_tab = False
-    if 'regression_type' not in st.session_state:
-        st.session_state.regression_type = 'FPR'
-    if 'monotonicity_results' not in st.session_state:
-        st.session_state.monotonicity_results = {}
+def initialize_ga_state():
+    if 'ga_optimizer' not in st.session_state:
+        st.session_state.ga_optimizer = {
+            'running': False,
+            'results': [],
+            'edited_df': None,
+            'zscored_df': None,
+            'excluded_rows': [],
+            'show_zscore_tab': False,
+            'regression_type': 'FPR',
+            'monotonicity_results': {},
+            'df_statistics': None
+        }
+    elif 'running' not in st.session_state.ga_optimizer:
+        st.session_state.ga_optimizer['running'] = False
 
 def main():
     if 'authenticated' not in st.session_state or not st.session_state['authenticated']:
         st.warning("Please login to access this page.")
         st.stop()
 
-    initialize_state()
+    initialize_ga_state()
     st.title("Genetic Algorithm Optimizer for Regression Models (GA-ORM)")
 
     # Fetch well details from the database
@@ -52,7 +50,7 @@ def main():
     df['Productivity'] = ""
 
     # Create initial tabs
-    if st.session_state.show_zscore_tab:
+    if st.session_state.ga_optimizer['show_zscore_tab']:
         tab1, tab2 = st.tabs(["Data Preview", "Z-Score Data"])
     else:
         tab1, = st.tabs(["Data Preview"])
@@ -79,29 +77,29 @@ def main():
         )
 
         edited_df = pd.DataFrame(grid_response['data'])
-        st.session_state.edited_df = edited_df
+        st.session_state.ga_optimizer['edited_df'] = edited_df
         # Calculate and store statistics
-        st.session_state.df_statistics = calculate_df_statistics(edited_df)
+        st.session_state.ga_optimizer['df_statistics'] = calculate_df_statistics(edited_df)
 
         if st.button("Z-Score Data"):
             if edited_df['Productivity'].isnull().any() or (edited_df['Productivity'] == "").any():
                 st.error("Please ensure all values in the 'Productivity' column are filled.")
             else:
                 zscored_df = zscore_data(edited_df)
-                st.session_state.zscored_df = zscored_df
-                st.session_state.show_zscore_tab = True
+                st.session_state.ga_optimizer['zscored_df'] = zscored_df
+                st.session_state.ga_optimizer['show_zscore_tab'] = True
                 st.success("Data has been Z-Scored.")
                 st.rerun()
 
-    if st.session_state.show_zscore_tab:
+    if st.session_state.ga_optimizer['show_zscore_tab']:
         with tab2:
             st.write("Z-Scored Data Preview:")
-            gb = GridOptionsBuilder.from_dataframe(st.session_state.zscored_df)
+            gb = GridOptionsBuilder.from_dataframe(st.session_state.ga_optimizer['zscored_df'])
             gb.configure_selection('multiple', use_checkbox=True)
             grid_options = gb.build()
 
             grid_response = AgGrid(
-                st.session_state.zscored_df,
+                st.session_state.ga_optimizer['zscored_df'],
                 gridOptions=grid_options,
                 update_mode=GridUpdateMode.SELECTION_CHANGED,
                 fit_columns_on_grid_load=True,
@@ -110,7 +108,7 @@ def main():
             )
 
             selected_rows = pd.DataFrame(grid_response['selected_rows'])
-            st.session_state.excluded_rows = selected_rows.index.tolist()
+            st.session_state.ga_optimizer['excluded_rows'] = selected_rows.index.tolist()
 
             st.write("Selected rows to exclude from GA optimization:")
             st.dataframe(selected_rows, use_container_width=True, hide_index=True)
@@ -168,31 +166,31 @@ def main():
             index=0,
             help="Select the type of regression model to use in the optimization process."
         )
-        st.session_state.regression_type = 'FPR' if regression_type == "Full Polynomial Regression" else 'LWIP'
+        st.session_state.ga_optimizer['regression_type'] = 'FPR' if regression_type == "Full Polynomial Regression" else 'LWIP'
 
     # Main Buttons for GA Optimizer
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("Start GA Optimization", key="start_button", disabled=st.session_state.running):
+        if st.button("Start GA Optimization", key="start_button", disabled=st.session_state.ga_optimizer['running']):
             with st.spinner('Running Genetic Algorithm...'):
-                st.session_state.running = True
-                st.session_state.results = []  # Reset results
+                st.session_state.ga_optimizer['running'] = True
+                st.session_state.ga_optimizer['results'] = []  # Reset results
                 st.rerun()
 
     with col2:
-        if st.button("Stop GA Optimization", key="stop_button", disabled=not st.session_state.running):
-            st.session_state.running = False
+        if st.button("Stop GA Optimization", key="stop_button", disabled=not st.session_state.ga_optimizer['running']):
+            st.session_state.ga_optimizer['running'] = False
             st.rerun()
 
-    if st.session_state.running:
-        start_ga_optimization(st.session_state.zscored_df, 'Productivity', predictors, r2_threshold, coef_range, 
-                              prob_crossover, prob_mutation, num_generations, population_size, 
-                              st.session_state.excluded_rows, st.session_state.regression_type, num_models)
+    if st.session_state.ga_optimizer['running']:
+        start_ga_optimization(st.session_state.ga_optimizer['zscored_df'], 'Productivity', predictors, r2_threshold, coef_range, 
+                            prob_crossover, prob_mutation, num_generations, population_size, 
+                            st.session_state.ga_optimizer['excluded_rows'], st.session_state.ga_optimizer['regression_type'], num_models)
 
-    if st.session_state.results:
-        st.success(f"Genetic Algorithm Optimization Complete! Generated {len(st.session_state.results)} models.")
+    if st.session_state.ga_optimizer['results']:
+        st.success(f"Genetic Algorithm Optimization Complete! Generated {len(st.session_state.ga_optimizer['results'])} models.")
 
-        for i, result in enumerate(st.session_state.results):
+        for i, result in enumerate(st.session_state.ga_optimizer['results']):
             best_ind, best_r2_score, response_equation, selected_feature_names, errors_df = result
             
             st.subheader(f"Model {i+1}")
@@ -207,10 +205,9 @@ def main():
                 st.write("Error Table for Individual Data Points")
                 st.dataframe(errors_df, use_container_width=True, hide_index=True)
 
-
         # Add download button for results
         with pd.ExcelWriter('genetic_algorithm_results.xlsx') as writer:
-            for i, result in enumerate(st.session_state.results):
+            for i, result in enumerate(st.session_state.ga_optimizer['results']):
                 best_ind, best_r2_score, response_equation, selected_feature_names, errors_df = result
                 pd.DataFrame([best_ind]).to_excel(writer, sheet_name=f'Model_{i+1}_Best_Individual')
                 pd.DataFrame([{'R² Score': best_r2_score, 'Response Equation': response_equation}]).to_excel(writer, sheet_name=f'Model_{i+1}_Details')
@@ -239,12 +236,9 @@ def main():
         selected_stages = st.multiselect("Select Stage(s)", options=stages, key="monotonicity_stage_select")
 
         # Model selection for monotonicity check
-        model_options = [f"Model {i+1} (R²: {result[1]:.4f})" for i, result in enumerate(st.session_state.results)]
+        model_options = [f"Model {i+1} (R²: {result[1]:.4f})" for i, result in enumerate(st.session_state.ga_optimizer['results'])]
         model_options.append("Custom Equation")
         selected_model = st.selectbox("Select Model for Monotonicity Check", options=model_options)
-
-        # # Custom equation input
-        # use_custom_equation = st.checkbox("Use custom equation")
 
         if selected_model == "Custom Equation":
             custom_equation = st.text_area(
@@ -266,9 +260,8 @@ def main():
                 equation_to_use = None
         else:
             model_index = int(selected_model.split()[1]) - 1
-            equation_to_use = st.session_state.results[model_index][2]
+            equation_to_use = st.session_state.ga_optimizer['results'][model_index][2]
             st.info(f"Using equation from {selected_model}")
-
 
         # Add this part to display the equation being used
         if equation_to_use:
@@ -292,22 +285,22 @@ def main():
                     if array_data is not None:
                         if not isinstance(array_data, pd.DataFrame):
                             array_data = pd.DataFrame(array_data)
-                        result_df = check_monotonicity_func(array_data, st.session_state.df_statistics, equation_to_use)
+                        result_df = check_monotonicity_func(array_data, st.session_state.ga_optimizer['df_statistics'], equation_to_use)
                         results[stage] = result_df
                     else:
                         st.warning(f"No data available for Stage {stage}. Skipping...")
                     progress_bar.progress((i + 1) / len(selected_stages))
 
-                st.session_state.monotonicity_results = results
+                st.session_state.ga_optimizer['monotonicity_results'] = results
                 status_text.text("Monotonicity check completed!")
                 st.success(f"Monotonicity check completed successfully for {len(results)} out of {len(selected_stages)} stages.")
 
         # Display results if available
-        if 'monotonicity_results' in st.session_state and st.session_state.monotonicity_results:
+        if st.session_state.ga_optimizer['monotonicity_results']:
             if len(selected_stages) == 1:
                 # Single stage selected
                 stage = selected_stages[0]
-                result_df = st.session_state.monotonicity_results[stage]
+                result_df = st.session_state.ga_optimizer['monotonicity_results'][stage]
                 
                 st.subheader(f"Monotonicity Check Results for Stage {stage}")
                 st.write(f"Total rows: {len(result_df)}")
@@ -325,7 +318,7 @@ def main():
             else:
                 # Multiple stages selected
                 st.subheader("Productivity Plots for Selected Stages")
-                for stage, result_df in st.session_state.monotonicity_results.items():
+                for stage, result_df in st.session_state.ga_optimizer['monotonicity_results'].items():
                     fig = plot_column(result_df, 'Productivity', stage)
                     st.plotly_chart(fig, use_container_width=True)
         else:
@@ -337,7 +330,7 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
     start_time = time.time()
     timer_placeholder = st.empty()
 
-    while len(st.session_state.results) < num_models and st.session_state.running:
+    while len(st.session_state.ga_optimizer['results']) < num_models and st.session_state.ga_optimizer['running']:
         result = ga_calculation.run_ga(
             df, target_column, predictors, r2_threshold, coef_range,
             prob_crossover, prob_mutation, num_generations, population_size,
@@ -346,12 +339,12 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
 
         if result:
             best_ind, best_r2_score, response_equation, selected_feature_names, errors_df = result
-            st.session_state.results.append((best_ind, best_r2_score, response_equation, selected_feature_names, errors_df))
-            st.success(f"Model {len(st.session_state.results)} generated (R²: {best_r2_score:.4f})")
+            st.session_state.ga_optimizer['results'].append((best_ind, best_r2_score, response_equation, selected_feature_names, errors_df))
+            st.success(f"Model {len(st.session_state.ga_optimizer['results'])} generated (R²: {best_r2_score:.4f})")
         else:
             st.warning("GA optimization did not produce a valid result. Retrying...")
 
-    st.session_state.running = False
+    st.session_state.ga_optimizer['running'] = False
     st.rerun()
 
 if __name__ == "__main__":

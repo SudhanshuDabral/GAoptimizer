@@ -80,7 +80,7 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
     r2_values = []
     iterations = []
 
-    while (best_r2_score < r2_threshold or not valid_coefficients) and st.session_state.running:
+    while (best_r2_score < r2_threshold or not valid_coefficients) and st.session_state.ga_optimizer['running']:
         iteration += 1
         # print(f"Iteration: {iteration}")
         pop = toolbox.population(n=population_size)
@@ -159,9 +159,9 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
                     'Error': errors
                 })
 
-                if not st.session_state.running:
+                if not st.session_state.ga_optimizer['running']:
                     return best_ind, best_r2_score, equation, selected_feature_names, errors_df
 
-    if not st.session_state.running:
+    if not st.session_state.ga_optimizer['running']:
         return None
     return best_ind, best_r2_score, equation, selected_feature_names, errors_df

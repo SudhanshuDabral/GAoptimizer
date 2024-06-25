@@ -6,17 +6,27 @@ import os
 import re
 from utils.db import call_insert_or_update_well_and_consolidated_output, call_insert_arrays_data
 
+def initialize_data_prep_state():
+    if 'data_prep' not in st.session_state:
+        st.session_state.data_prep = {
+            'well_details': None,
+            'processing_files': False,
+            'consolidated_output': None
+        }
+
 def main():
     # Check if user is authenticated
     if 'authenticated' not in st.session_state or not st.session_state['authenticated']:
         st.warning("Please login to access this page.")
         st.stop()
 
+    initialize_data_prep_state()
+
     st.title("Data Preparation")
     st.write("Provide the well details and upload CSV files for each stage of the well completion.")
 
     # Form to input well details
-    if 'well_details' not in st.session_state:
+    if st.session_state.data_prep['well_details'] is None:
         with st.form("well_details_form"):
             well_name = st.text_input("Well Name")
             well_api = st.text_input("Well API")
@@ -71,7 +81,7 @@ def main():
                     (-90 <= latitude <= 90) and (-180 <= longitude <= 180) and
                     (500 <= tvd <= 15500) and (2000 <= reservoir_pressure <= 8500)
                 ):
-                    st.session_state.well_details = {
+                    st.session_state.data_prep['well_details'] = {
                         "Well Name": well_name,
                         "Well API": well_api,
                         "Latitude": latitude,
@@ -81,8 +91,8 @@ def main():
                     }
                     st.experimental_rerun()
 
-    if 'well_details' in st.session_state:
-        well_details = st.session_state.well_details
+    if st.session_state.data_prep['well_details'] is not None:
+        well_details = st.session_state.data_prep['well_details']
         st.subheader("Well Information")
         st.table(pd.DataFrame([well_details]))
 
@@ -90,19 +100,19 @@ def main():
         uploaded_files = st.file_uploader("Upload CSV files", accept_multiple_files=True, type=["csv"])
 
         if uploaded_files:
-            if 'processing_files' not in st.session_state:
-                st.session_state.processing_files = True
+            if not st.session_state.data_prep['processing_files']:
+                st.session_state.data_prep['processing_files'] = True
                 process_files(uploaded_files, well_details)
-                st.session_state.processing_files = False
+                st.session_state.data_prep['processing_files'] = False
 
             # Show the consolidated results in a table
-            if 'consolidated_output' in st.session_state:
+            if st.session_state.data_prep['consolidated_output'] is not None:
                 st.subheader("Data for Modelling")
-                st.dataframe(st.session_state['consolidated_output'], use_container_width=True, hide_index=True)
+                st.dataframe(st.session_state.data_prep['consolidated_output'], use_container_width=True, hide_index=True)
 
             # Add a button to save data in DB
             if st.button("Save Data in DB"):
-                save_data_in_db(well_details, st.session_state['consolidated_output'], st.session_state['user_id'])
+                save_data_in_db(well_details, st.session_state.data_prep['consolidated_output'], st.session_state['user_id'])
 
 def extract_stage(filename):
     match = re.search(r'_(\d+)\.csv', filename)
@@ -241,7 +251,7 @@ def process_files(files, well_details):
     all_results.to_csv(output_file_path, index=False)
 
     # Save the consolidated results in session state
-    st.session_state['consolidated_output'] = all_results
+    st.session_state.data_prep['consolidated_output'] = all_results
 
     # Hide the progress bar
     progress_bar.empty()
@@ -322,7 +332,5 @@ def save_data_in_db(well_details, consolidated_output, user_id):
             os.remove(os.path.join(user_dir, file))
         os.rmdir(user_dir)
 
-
 if __name__ == "__main__":
     main()
-
