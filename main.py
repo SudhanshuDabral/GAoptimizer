@@ -4,6 +4,7 @@ from utils.db import fetch_all_users, fetch_user_access
 import logging
 from logging.handlers import RotatingFileHandler
 import os
+from pathlib import Path
 
 # Import all page modules at the top
 import modules.ga_main as ga_main
@@ -31,8 +32,17 @@ logging.basicConfig(level=logging.DEBUG,
 logger = logging.getLogger(__name__)
 
 
-# Set the page configuration
-st.set_page_config(page_title="Evolv AI", layout="wide")
+# Get the absolute path to your favicon file
+current_dir = Path(__file__).parent if "__file__" in locals() else Path.cwd()
+favicon_path = current_dir / "static" / "images" /"evolv_ai_favicon.png"
+
+# Set page config with favicon
+st.set_page_config(
+    page_title="EvolvAI",
+    page_icon= str(favicon_path),
+    layout="wide"
+)
+
 # Load custom CSS
 st.markdown(load_css(), unsafe_allow_html=True)
 
