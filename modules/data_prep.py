@@ -14,11 +14,10 @@ def initialize_data_prep_state():
             'consolidated_output': None
         }
 
-def main():
-    # Check if user is authenticated
-    if 'authenticated' not in st.session_state or not st.session_state['authenticated']:
+def main(authentication_status):
+    if not authentication_status:
         st.warning("Please login to access this page.")
-        st.stop()
+        return
 
     initialize_data_prep_state()
 

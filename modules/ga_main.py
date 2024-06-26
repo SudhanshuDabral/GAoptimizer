@@ -1,18 +1,44 @@
 import streamlit as st
 import pandas as pd
-import sys
-import os
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from utils.db import get_well_details, get_modeling_data, get_well_stages, get_array_data
+import os
+from logging.handlers import RotatingFileHandler
+import logging
 
-# Add the parent directory to the Python path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-import ga.ga_calculation as ga_calculation
+from ga.ga_calculation import run_ga as run_ga_optimization
 from ga.check_monotonicity import check_monotonicity as check_monotonicity_func
 from utils.plotting import plot_column
 from utils.ga_utils import zscore_data, calculate_df_statistics, validate_custom_equation
 import time
 
+
+# Set up logging
+log_dir = 'logs'
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+
+log_file = os.path.join(log_dir, 'app_logs.log')
+
+# Check if the root logger already has handlers to avoid duplicate logging
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=logging.DEBUG,
+                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                        handlers=[
+                            RotatingFileHandler(log_file, maxBytes=10485760, backupCount=5),
+                            logging.StreamHandler()
+                        ])
+
+logger = logging.getLogger(__name__)
+
+# Add a prefix to all log messages from this file
+class PrefixAdapter(logging.LoggerAdapter):
+    def process(self, msg, kwargs):
+        return '[GA Optimizer] %s' % msg, kwargs
+
+logger = PrefixAdapter(logger, {})
+
+# Function to initialize the GA optimizer state in the session
 def initialize_ga_state():
     if 'ga_optimizer' not in st.session_state:
         st.session_state.ga_optimizer = {
@@ -28,14 +54,26 @@ def initialize_ga_state():
         }
     elif 'running' not in st.session_state.ga_optimizer:
         st.session_state.ga_optimizer['running'] = False
+    logger.debug(f"GA state after initialization: {st.session_state.ga_optimizer}")
 
-def main():
-    if 'authenticated' not in st.session_state or not st.session_state['authenticated']:
+
+def main(authentication_status):
+    if not authentication_status:
         st.warning("Please login to access this page.")
+        logger.warning(f"User not authenticated in {__name__}")
+        return
+
+    # Check if critical session state variables are present
+    critical_vars = ['user_id', 'username', 'is_admin', 'access']
+    missing_vars = [var for var in critical_vars if var not in st.session_state]
+    if missing_vars:
+        logger.error(f"Missing critical session state variables: {missing_vars}")
+        st.error("An error occurred. Please try logging in again.")
         st.stop()
 
     initialize_ga_state()
     st.title("Genetic Algorithm Optimizer for Regression Models (GA-ORM)")
+
 
     # Fetch well details from the database
     wells = get_well_details()
@@ -331,7 +369,7 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
     timer_placeholder = st.empty()
 
     while len(st.session_state.ga_optimizer['results']) < num_models and st.session_state.ga_optimizer['running']:
-        result = ga_calculation.run_ga(
+        result = run_ga_optimization(
             df, target_column, predictors, r2_threshold, coef_range,
             prob_crossover, prob_mutation, num_generations, population_size,
             timer_placeholder, regression_type
@@ -340,11 +378,14 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
         if result:
             best_ind, best_r2_score, response_equation, selected_feature_names, errors_df = result
             st.session_state.ga_optimizer['results'].append((best_ind, best_r2_score, response_equation, selected_feature_names, errors_df))
+            logger.info(f"Model {len(st.session_state.ga_optimizer['results'])} generated (R²: {best_r2_score:.4f})")
             st.success(f"Model {len(st.session_state.ga_optimizer['results'])} generated (R²: {best_r2_score:.4f})")
         else:
+            logger.warning("GA optimization did not produce a valid result. Retrying...")
             st.warning("GA optimization did not produce a valid result. Retrying...")
 
     st.session_state.ga_optimizer['running'] = False
+    logger.debug("GA optimization completed")
     st.rerun()
 
 if __name__ == "__main__":

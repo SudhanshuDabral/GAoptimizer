@@ -1,9 +1,9 @@
 import streamlit as st
 
-def main():
-    if 'authenticated' not in st.session_state or not st.session_state['authenticated']:
+def main(authentication_status):
+    if not authentication_status:
         st.warning("Please login to access this page.")
-        st.stop()
+        return
         
     st.title("Dashboard")
 

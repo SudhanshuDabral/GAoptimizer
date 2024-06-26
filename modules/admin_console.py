@@ -34,11 +34,10 @@ def is_valid_password(password):
     return re.match(pattern, password) is not None
 
 
-def main():
-    # Check if user is authenticated and is an admin
-    if 'authenticated' not in st.session_state or not st.session_state['authenticated']:
+def main(authentication_status):
+    if not authentication_status:
         st.warning("Please login to access this page.")
-        st.stop()
+        return
     elif not st.session_state['is_admin']:
         st.error("You do not have permission to access this page.")
         st.stop()
