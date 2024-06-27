@@ -8,8 +8,8 @@ import logging
 
 from ga.ga_calculation import run_ga as run_ga_optimization
 from ga.check_monotonicity import check_monotonicity as check_monotonicity_func
-from utils.plotting import plot_column
-from utils.ga_utils import zscore_data, calculate_df_statistics, validate_custom_equation
+from utils.plotting import plot_column, plot_actual_vs_predicted
+from utils.ga_utils import zscore_data, calculate_df_statistics, validate_custom_equation, calculate_predicted_productivity
 import time
 
 # Set up logging
@@ -185,7 +185,7 @@ def ga_optimization_section():
         st.success(f"Genetic Algorithm Optimization Complete! Generated {len(st.session_state.ga_optimizer['results'])} models.")
 
         for i, result in enumerate(st.session_state.ga_optimizer['results']):
-            best_ind, best_r2_score, response_equation, selected_feature_names, errors_df = result
+            best_ind, best_r2_score, response_equation, selected_feature_names, errors_df, predicted_values, zscored_df, excluded_rows = result
             
             st.subheader(f"Model {i+1}")
             st.write(f"R² Score: {best_r2_score:.4f}")
@@ -199,10 +199,14 @@ def ga_optimization_section():
                 st.write("Error Table for Individual Data Points")
                 st.dataframe(errors_df, use_container_width=True, hide_index=True)
 
+                st.write("Actual vs Predicted Productivity Plot")
+                fig = plot_actual_vs_predicted(zscored_df['Productivity'], predicted_values, zscored_df['stage'], excluded_rows)
+                st.plotly_chart(fig, use_container_width=True)
+
         # Add download button for results
         with pd.ExcelWriter('genetic_algorithm_results.xlsx') as writer:
             for i, result in enumerate(st.session_state.ga_optimizer['results']):
-                best_ind, best_r2_score, response_equation, selected_feature_names, errors_df = result
+                best_ind, best_r2_score, response_equation, selected_feature_names, errors_df, _, _, _ = result
                 pd.DataFrame([best_ind]).to_excel(writer, sheet_name=f'Model_{i+1}_Best_Individual')
                 pd.DataFrame([{'R² Score': best_r2_score, 'Response Equation': response_equation}]).to_excel(writer, sheet_name=f'Model_{i+1}_Details')
                 pd.DataFrame(selected_feature_names, columns=['Selected Features']).to_excel(writer, sheet_name=f'Model_{i+1}_Features')
@@ -337,8 +341,9 @@ def display_monotonicity_results(selected_stages):
         st.info("Run Monotonicity check to see results.")
 
 def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, excluded_rows, regression_type, num_models):
-    df = df.apply(pd.to_numeric, errors='coerce')
-    df = df.drop(excluded_rows)
+    full_zscored_df = df.copy()  # Keep a copy of the full z-scored dataset
+    df = df.drop(excluded_rows)  # Drop rows for GA optimization
+    
     start_time = time.time()
     timer_placeholder = st.empty()
 
@@ -351,7 +356,14 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
 
         if result:
             best_ind, best_r2_score, response_equation, selected_feature_names, errors_df = result
-            st.session_state.ga_optimizer['results'].append((best_ind, best_r2_score, response_equation, selected_feature_names, errors_df))
+            
+            # Calculate predicted values using the response equation and full z-scored data
+            predicted_values = calculate_predicted_productivity(full_zscored_df, response_equation)
+            
+            # Add predicted values, full z-scored data, and excluded_rows to the result tuple
+            result_with_predictions = (best_ind, best_r2_score, response_equation, selected_feature_names, errors_df, predicted_values, full_zscored_df, excluded_rows)
+            
+            st.session_state.ga_optimizer['results'].append(result_with_predictions)
             log_message(logging.INFO, f"Model {len(st.session_state.ga_optimizer['results'])} generated (R²: {best_r2_score:.4f})")
             st.success(f"Model {len(st.session_state.ga_optimizer['results'])} generated (R²: {best_r2_score:.4f})")
         else:

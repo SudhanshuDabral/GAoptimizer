@@ -1,5 +1,7 @@
 import pandas as pd
 from ga.check_monotonicity import check_monotonicity as check_monotonicity_func
+import numpy as np
+import re
 
 # function to calculate zscore for the data
 def zscore_data(df):
@@ -73,3 +75,35 @@ def validate_custom_equation(equation):
         return False, f"Invalid equation structure: {str(e)}"
     
     return True, "Equation is valid"
+
+# function to calculate predicted productivity for modelling used in ga_main.py
+def calculate_predicted_productivity(zscored_df, response_equation):
+    # Extract variable names and coefficients from the equation
+    equation_parts = re.findall(r'([-+]?\s*\d*\.?\d*)\s*\*?\s*(\w+)(?:\s*\*\s*(\w+))?', response_equation)
+    
+    predicted = np.zeros(len(zscored_df))
+    
+    for coef, var1, var2 in equation_parts:
+        coef = float(coef) if coef else 1.0
+        if var1 == 'Corrected_Prod':
+            continue  # Skip the left side of the equation
+        elif var2:  # Interaction term
+            if var1 in zscored_df.columns and var2 in zscored_df.columns:
+                predicted += coef * zscored_df[var1] * zscored_df[var2]
+            else:
+                print(f"Warning: Columns {var1} or {var2} not found in DataFrame")
+        else:  # Single term
+            if var1 in zscored_df.columns:
+                predicted += coef * zscored_df[var1]
+            else:
+                print(f"Warning: Column {var1} not found in DataFrame")
+    
+    # Add intercept
+    intercept_match = re.search(r'Corrected_Prod\s*=\s*([-+]?\d*\.?\d*)', response_equation)
+    if intercept_match:
+        intercept = float(intercept_match.group(1))
+        predicted += intercept
+    else:
+        print("Warning: Intercept not found in equation")
+    
+    return predicted
