@@ -5,13 +5,29 @@ import re
 
 # function to calculate zscore for the data
 def zscore_data(df):
-    for column in df.columns:
-        if column != 'stage':
-            df[column] = pd.to_numeric(df[column], errors='coerce')
-            col_mean = df[column].mean()
-            col_std = df[column].std(ddof=1)
-            df[column] = (df[column] - col_mean) / col_std
-    return df
+    # Create a copy of the dataframe to avoid modifying the original
+    zscored_df = df.copy()
+    
+    # Preserve 'Well Name' and 'stage' columns
+    well_name = zscored_df['Well Name']
+    stage = zscored_df['stage']
+    
+    for column in zscored_df.columns:
+        if column not in ['Well Name', 'stage']:
+            zscored_df[column] = pd.to_numeric(zscored_df[column], errors='coerce')
+            col_mean = zscored_df[column].mean()
+            col_std = zscored_df[column].std(ddof=1)
+            if col_std != 0:  # Avoid division by zero
+                zscored_df[column] = (zscored_df[column] - col_mean) / col_std
+            else:
+                # If standard deviation is zero, set all values to zero
+                zscored_df[column] = 0
+    
+    # Add back 'Well Name' and 'stage' columns
+    zscored_df['Well Name'] = well_name
+    zscored_df['stage'] = stage
+    
+    return zscored_df
 
 # function to calculate statistics for the original data for modelling used in ga_main.py
 def calculate_df_statistics(df):

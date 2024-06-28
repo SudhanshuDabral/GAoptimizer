@@ -46,8 +46,17 @@ def calculate_stage(df, column, avg, std):
     return stage_values
 
 def check_monotonicity(array_data, df_statistics, response_equation):
-    # Create a DataFrame from array_data
-    df = pd.DataFrame(array_data)
+    # Create a DataFrame from array_data with correct column names
+    expected_columns = ['pmaxmin_win', 'downhole_win_prop', 'slr_win']
+    if isinstance(array_data, pd.DataFrame):
+        df = array_data
+    else:
+        df = pd.DataFrame(array_data, columns=expected_columns)
+
+    # Ensure all expected columns are present
+    for col in expected_columns:
+        if col not in df.columns:
+            raise ValueError(f"Expected column '{col}' not found in input data")
 
     # Calculate all parameters
     df['median_dp_original'] = calculate_median(df['pmaxmin_win'], 5)

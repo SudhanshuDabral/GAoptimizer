@@ -13,8 +13,6 @@ import modules.dashboard as dashboard
 import modules.admin_console as admin_console
 from static.styles import load_css, set_page_container_style, display_header
 
-
-
 # Set up logging
 log_dir = 'logs'
 if not os.path.exists(log_dir):
@@ -26,20 +24,18 @@ logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                     handlers=[
                         RotatingFileHandler(log_file, maxBytes=10485760, backupCount=5),
-                        logging.StreamHandler()
                     ])
 
 logger = logging.getLogger(__name__)
 
-
 # Get the absolute path to your favicon file
 current_dir = Path(__file__).parent if "__file__" in locals() else Path.cwd()
-favicon_path = current_dir / "static" / "images" /"evolv_ai_favicon.png"
+favicon_path = current_dir / "static" / "images" / "evolv_ai_favicon.png"
 
 # Set page config with favicon
 st.set_page_config(
     page_title="EvolvAI",
-    page_icon= str(favicon_path),
+    page_icon=str(favicon_path),
     layout="wide"
 )
 
@@ -51,7 +47,6 @@ set_page_container_style()
 
 # Display header
 display_header()
-
 
 def initialize_state():
     if 'authentication_status' not in st.session_state:
@@ -78,7 +73,7 @@ def load_config():
     try:
         users = fetch_all_users()
         if users is None:
-            st.error("Failed to fetch user credentials from the database.")
+            logger.error("Failed to fetch user credentials from the database.")
             return None
 
         credentials = {'usernames': {}}
@@ -104,6 +99,7 @@ def load_config():
             }
         }
 
+        logger.info("Config loaded successfully")
         return config
     except Exception as e:
         logger.error(f"Failed to load config: {str(e)}")
@@ -124,7 +120,6 @@ authenticator = stauth.Authenticate(
 )
 
 def login():
-    
     st.markdown("<h1 style='text-align: center;'>Analysis made easy</h1>", unsafe_allow_html=True)
 
     name, authentication_status, username = authenticator.login(
@@ -138,6 +133,7 @@ def login():
     )
 
     if authentication_status:
+        logger.info(f"User logged in successfully: {username}")
         user_data = config['credentials']['usernames'][username]
         st.session_state['authentication_status'] = authentication_status
         st.session_state['username'] = username
@@ -148,6 +144,7 @@ def login():
         st.session_state['access'] = fetch_user_access(username)
         st.rerun()
     elif authentication_status == False:
+        logger.warning("Failed login attempt")
         st.error('Username/password is incorrect')
     elif authentication_status == None:
         st.warning('Please enter your username and password')
@@ -168,6 +165,7 @@ def navigation():
         nav_choice = st.radio("Select a page", nav_options, key="nav_radio")
 
         if nav_choice != st.session_state.get('current_page'):
+            logger.info(f"Navigation changed from {st.session_state.get('current_page')} to {nav_choice}")
             if st.session_state.get('current_page') == "GA Optimizer":
                 clear_ga_optimizer_state()
             elif st.session_state.get('current_page') == "Data Preparation":
@@ -179,37 +177,36 @@ def navigation():
         st.markdown('<hr style="margin: 20px 0;">', unsafe_allow_html=True)
 
         if authenticator.logout('Logout', 'main'):
+            logger.info("User logged out")
             st.rerun()
 
         st.markdown('</div>', unsafe_allow_html=True)
 
     try:
-        logger.debug(f"Navigation choice: {nav_choice}")
-        
         with st.spinner("Loading page..."):
             if nav_choice == "GA Optimizer":
-                logger.debug("Entering GA Optimizer section")
                 if "GA Optimizer" in st.session_state['access']:
                     ga_main.main(st.session_state["authentication_status"])
                 else:
+                    logger.warning("Unauthorized access attempt to GA Optimizer")
                     st.warning("You do not have permission to access this page.")
             elif nav_choice == "Data Preparation":
-                logger.debug("Entering Data Preparation section")
                 if "Data Preparation" in st.session_state['access']:
                     data_prep.main(st.session_state["authentication_status"])
                 else:
+                    logger.warning("Unauthorized access attempt to Data Preparation")
                     st.warning("You do not have permission to access this page.")
             elif nav_choice == "Dashboard":
-                logger.debug("Entering Dashboard section")
                 if "Dashboard" in st.session_state['access']:
                     dashboard.main(st.session_state["authentication_status"])
                 else:
+                    logger.warning("Unauthorized access attempt to Dashboard")
                     st.warning("You do not have permission to access this page.")
             elif nav_choice == "Admin Console":
-                logger.debug("Entering Admin Console section")
                 if st.session_state['is_admin']:
                     admin_console.main(st.session_state["authentication_status"])
                 else:
+                    logger.warning("Unauthorized access attempt to Admin Console")
                     st.warning("You do not have permission to access this page.")
     except Exception as e:
         logger.error(f"Error in navigation: {str(e)}", exc_info=True)
@@ -217,6 +214,7 @@ def navigation():
 
 def clear_ga_optimizer_state():
     if 'ga_optimizer' in st.session_state:
+        logger.info("Clearing GA Optimizer state")
         st.session_state.ga_optimizer = {
             'running': False,
             'results': [],
@@ -226,11 +224,19 @@ def clear_ga_optimizer_state():
             'show_zscore_tab': False,
             'regression_type': 'FPR',
             'monotonicity_results': {},
-            'df_statistics': None
+            'df_statistics': None,
+            'show_monotonicity': False,
+            'selected_wells': [],
+            'r2_threshold': 0.55,
+            'prob_crossover': 0.8,
+            'prob_mutation': 0.2,
+            'num_generations': 40,
+            'population_size': 50
         }
 
 def clear_data_prep_state():
     if 'data_prep' in st.session_state:
+        logger.info("Clearing Data Preparation state")
         st.session_state.data_prep = {
             'well_details': None,
             'processing_files': False,
@@ -240,7 +246,7 @@ def clear_data_prep_state():
 def main():
     try:
         initialize_state()
-        logger.debug(f"Session state after initialization: {st.session_state}")
+        logger.debug("Session state initialized")
 
         if st.session_state["authentication_status"]:
             navigation()

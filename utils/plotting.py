@@ -1,5 +1,6 @@
 import plotly.graph_objects as go
 import streamlit as st
+import plotly.express as px
 
 r2_values = []
 iterations = []
@@ -54,61 +55,79 @@ def plot_column(df, column_name, stage):
     return fig
 
 #function to plot the actual vs predicted productivity
-def plot_actual_vs_predicted(actual, predicted, stages, excluded_rows):
+def plot_actual_vs_predicted(actual, predicted, excluded_rows, well_names, stages):
     fig = go.Figure()
 
     # Create a mask for excluded points
     excluded_mask = stages.index.isin(excluded_rows)
     
-    # Plot predicted productivity (all points)
-    fig.add_trace(go.Scatter(
-        x=stages,
-        y=predicted,
-        mode='lines+markers',
-        name='Predicted Productivity',
-        line=dict(color='green')
-    ))
+    # Get unique well names
+    unique_wells = well_names.unique()
+    colors = px.colors.qualitative.Plotly[:len(unique_wells)]
+    color_map = dict(zip(unique_wells, colors))
 
-    # Plot actual productivity (included points)
-    fig.add_trace(go.Scatter(
-        x=stages[~excluded_mask],
-        y=actual[~excluded_mask],
-        mode='lines+markers',
-        name='Actual Productivity (Included)',
-        line=dict(color='blue')
-    ))
+    # Plot included points for each well
+    for well in unique_wells:
+        well_mask = (well_names == well) & (~excluded_mask)
+        fig.add_trace(go.Scatter(
+            x=predicted[well_mask],
+            y=actual[well_mask],
+            mode='markers',
+            name=f'{well} (Included)',
+            marker=dict(color=color_map[well], size=8)
+        ))
     
-    # Plot actual productivity (excluded points)
+    # Plot excluded points for each well
+    for well in unique_wells:
+        well_mask = (well_names == well) & excluded_mask
+        fig.add_trace(go.Scatter(
+            x=predicted[well_mask],
+            y=actual[well_mask],
+            mode='markers',
+            name=f'{well} (Excluded)',
+            marker=dict(color=color_map[well], size=10, symbol='x')
+        ))
+
+    # Add perfect prediction line
+    max_value = max(actual.max(), predicted.max())
+    min_value = min(actual.min(), predicted.min())
     fig.add_trace(go.Scatter(
-        x=stages[excluded_mask],
-        y=actual[excluded_mask],
-        mode='markers',
-        name='Actual Productivity (Excluded)',
-        marker=dict(color='red', size=10, symbol='x')
+        x=[min_value, max_value],
+        y=[min_value, max_value],
+        mode='lines',
+        name='Perfect Prediction',
+        line=dict(color='black', dash='dash')
     ))
 
     # Add labels for excluded points
-    for i, stage in enumerate(stages[excluded_mask]):
+    for idx in stages.index[excluded_mask]:
         fig.add_annotation(
-            x=stage,
-            y=actual[excluded_mask].iloc[i],
-            text=f"Stage {stage}",
+            x=predicted[idx],
+            y=actual[idx],
+            text=f"{well_names[idx]}: Stage {stages[idx]}",
             showarrow=True,
             arrowhead=2,
             arrowsize=1,
             arrowwidth=2,
-            arrowcolor="red",
+            arrowcolor=color_map[well_names[idx]],
             ax=20,
             ay=-30
         )
 
     fig.update_layout(
-        title='Model Fitness Plot',
-        xaxis_title='Stage',
-        yaxis_title='Productivity',
+        title='Model Fitness',
+        xaxis_title='Predicted Productivity',
+        yaxis_title='Actual Productivity',
         legend_title='Legend',
         height=600,
         width=800
+    )
+    
+    # Make the plot square and set axis ranges to be equal
+    fig.update_layout(
+        yaxis=dict(scaleanchor="x", scaleratio=1),
+        xaxis=dict(range=[min_value, max_value]),
+        yaxis_range=[min_value, max_value]
     )
     
     return fig
