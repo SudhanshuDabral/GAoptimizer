@@ -1,0 +1,12 @@
+deap==1.4.1
+numpy==2.0.0
+pandas==1.5.3
+plotly==5.14.1
+psycopg2==2.9.9
+psycopg2_binary==2.9.9
+scikit_learn==1.4.1.post1
+streamlit==1.36.0
+streamlit_authenticator
+streamlit-aggrid==1.0.5 
+
+
