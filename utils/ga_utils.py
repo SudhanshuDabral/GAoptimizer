@@ -8,12 +8,12 @@ def zscore_data(df):
     # Create a copy of the dataframe to avoid modifying the original
     zscored_df = df.copy()
     
-    # Preserve 'Well Name' and 'stage' columns
-    well_name = zscored_df['Well Name']
-    stage = zscored_df['stage']
+    # Preserve 'Well Name', 'stage', 'data_id', and 'well_id' columns
+    preserved_columns = ['Well Name', 'stage', 'data_id', 'well_id']
+    preserved_data = {col: zscored_df[col] for col in preserved_columns if col in zscored_df.columns}
     
     for column in zscored_df.columns:
-        if column not in ['Well Name', 'stage']:
+        if column not in preserved_columns:
             zscored_df[column] = pd.to_numeric(zscored_df[column], errors='coerce')
             col_mean = zscored_df[column].mean()
             col_std = zscored_df[column].std(ddof=1)
@@ -23,9 +23,9 @@ def zscore_data(df):
                 # If standard deviation is zero, set all values to zero
                 zscored_df[column] = 0
     
-    # Add back 'Well Name' and 'stage' columns
-    zscored_df['Well Name'] = well_name
-    zscored_df['stage'] = stage
+    # Add back preserved columns
+    for col, data in preserved_data.items():
+        zscored_df[col] = data
     
     return zscored_df
 
@@ -40,6 +40,7 @@ def calculate_df_statistics(df):
                 'std': df[col].std(ddof=1)
             }
     return stats
+
 
 # function to check monotonicity of the data for modelling used in ga_main.py
 def batch_monotonicity_check(stages, well_id, get_array_data_func, df_statistics, equation):

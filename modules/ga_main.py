@@ -1,8 +1,8 @@
+import traceback
 import streamlit as st
 import pandas as pd
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
-from utils.db import get_well_details, get_modeling_data, get_well_stages, get_array_data, store_ga_model
-import os
+from utils.db import get_well_details, get_modeling_data, get_well_stages, get_array_data
 from logging.handlers import RotatingFileHandler
 import logging
 from ga.ga_calculation import run_ga as run_ga_optimization
@@ -10,6 +10,7 @@ from ga.check_monotonicity import check_monotonicity as check_monotonicity_func
 from utils.plotting import plot_column, plot_actual_vs_predicted
 from utils.ga_utils import zscore_data, calculate_df_statistics, validate_custom_equation, calculate_predicted_productivity
 import time
+import os
 
 # Set up logging
 log_dir = 'logs'
@@ -38,12 +39,11 @@ def initialize_ga_state():
             'edited_df': None,
             'zscored_df': None,
             'excluded_rows': [],
-            'show_zscore_tab': False,
+            'show_zscore': False,
             'regression_type': 'FPR',
             'monotonicity_results': {},
             'df_statistics': None,
             'show_monotonicity': False,
-            'selected_wells': [],
             'r2_threshold': 0.55,
             'prob_crossover': 0.8,
             'prob_mutation': 0.2,
@@ -77,8 +77,6 @@ def ga_optimization_section():
     selected_wells = st.multiselect("Select Wells", options=list(well_options.keys()))
     selected_well_ids = [well_options[well] for well in selected_wells]
     
-    st.session_state.ga_optimizer['selected_wells'] = selected_well_ids
-
     if not selected_wells:
         st.warning("Please select at least one well to proceed.")
         return
@@ -92,7 +90,7 @@ def ga_optimization_section():
     df = consolidated_data.sort_values(by=['Well Name', 'stage'])
     df['Productivity'] = ""
 
-    if st.session_state.ga_optimizer['show_zscore_tab']:
+    if st.session_state.ga_optimizer['show_zscore']:
         tab1, tab2 = st.tabs(["Data Preview", "Z-Score Data"])
     else:
         tab1, = st.tabs(["Data Preview"])
@@ -102,8 +100,10 @@ def ga_optimization_section():
         gb = GridOptionsBuilder.from_dataframe(df)
         gb.configure_column("Productivity", editable=True)
         gb.configure_column("Well Name", hide=False)
+        gb.configure_column("data_id", hide=True)
+        gb.configure_column("well_id", hide=True)
         for col in df.columns:
-            if col not in ['Productivity', 'Well Name']:
+            if col not in ['Productivity', 'Well Name', 'data_id', 'well_id']:
                 gb.configure_column(col, editable=False)
         gb.configure_grid_options(domLayout='normal', suppressMovableColumns=True, enableRangeSelection=True, clipboardDelimiter=',')
         grid_options = gb.build()
@@ -119,30 +119,48 @@ def ga_optimization_section():
             else:
                 zscored_df = zscore_data(edited_df)
                 st.session_state.ga_optimizer['zscored_df'] = zscored_df
-                st.session_state.ga_optimizer['show_zscore_tab'] = True
+                st.session_state.ga_optimizer['show_zscore'] = True
                 st.success("Data has been Z-Scored.")
                 st.rerun()
 
-    if st.session_state.ga_optimizer['show_zscore_tab']:
+    if st.session_state.ga_optimizer['show_zscore']:
         with tab2:
             st.write("Z-Scored Data Preview:")
             gb = GridOptionsBuilder.from_dataframe(st.session_state.ga_optimizer['zscored_df'])
             gb.configure_selection('multiple', use_checkbox=True)
             gb.configure_column("Well Name", hide=False)
+            gb.configure_column("data_id", hide=True)
+            gb.configure_column("well_id", hide=True)
+            gb.configure_column("tee", checkboxSelection=True, headerCheckboxSelection=True)
+            gb.configure_grid_options(suppressRowClickSelection=True)
             grid_options = gb.build()
             grid_response = AgGrid(st.session_state.ga_optimizer['zscored_df'], gridOptions=grid_options,
                                    update_mode=GridUpdateMode.SELECTION_CHANGED, fit_columns_on_grid_load=True,
                                    height=400, allow_unsafe_jscode=True)
             selected_rows = pd.DataFrame(grid_response['selected_rows'])
-            st.session_state.ga_optimizer['excluded_rows'] = selected_rows.index.tolist()
+            
+            if not selected_rows.empty:
+                if 'data_id' in selected_rows.columns:
+                    st.session_state.ga_optimizer['excluded_rows'] = selected_rows['data_id'].tolist()
+                else:
+                    # If data_id is not in selected_rows, we need to map the selections back to the original dataframe
+                    selected_indices = [st.session_state.ga_optimizer['zscored_df'].index.get_loc(row['Well Name']) for row in selected_rows.to_dict('records')]
+                    st.session_state.ga_optimizer['excluded_rows'] = zscored_df.iloc[selected_indices]['data_id'].tolist()
+            else:
+                st.session_state.ga_optimizer['excluded_rows'] = []
+            
             st.write("Selected rows to exclude from GA optimization:")
-            st.dataframe(selected_rows, use_container_width=True, hide_index=True)
+            display_columns = [col for col in selected_rows.columns if col not in ['data_id', 'well_id']]
+            st.dataframe(selected_rows[display_columns], use_container_width=True, hide_index=True)
+            
+            # Display the number of selected rows
+            st.write(f"Number of datapoints selected for exclusion: {len(st.session_state.ga_optimizer['excluded_rows'])}")
 
     with st.expander("Feature Selection"):
         drop_columns = st.multiselect("Select Columns to Drop",
-                                      [col for col in df.columns if col not in ['Productivity', 'stage']],
+                                      [col for col in df.columns if col not in ['Productivity', 'stage', 'data_id', 'well_id', 'Well Name']],
                                       help="Choose columns that you do not want to include in the optimization process.")
-        predictors = [col for col in df.columns if col not in ['Productivity', 'stage', 'Well Name'] and col not in drop_columns]
+        predictors = [col for col in df.columns if col not in ['Productivity', 'stage', 'Well Name', 'data_id', 'well_id'] and col not in drop_columns]
 
     with st.expander("GA Optimizer Parameters", expanded=True):
         st.session_state.ga_optimizer['r2_threshold'] = st.number_input("R² Threshold", min_value=0.0, max_value=1.0, value=0.55,
@@ -187,6 +205,7 @@ def ga_optimization_section():
 
     if st.session_state.ga_optimizer['results']:
         display_ga_results()
+
 
 def fetch_consolidated_data(well_ids):
     consolidated_data = pd.DataFrame()
@@ -242,60 +261,7 @@ def display_ga_results():
     else:
         st.warning("No results available to download.")
 
-def save_model(model_index):
-    if 'results' not in st.session_state.ga_optimizer or not st.session_state.ga_optimizer['results']:
-        st.error("No models available to save. Please run GA optimization first.")
-        return
-
-    if model_index < 0 or model_index >= len(st.session_state.ga_optimizer['results']):
-        st.error("Invalid model index. Please select a valid model.")
-        return
-
-    model_result = st.session_state.ga_optimizer['results'][model_index]
-    best_ind, weighted_r2_score, response_equation, selected_feature_names, errors_df, predicted_values, zscored_df, excluded_rows, full_dataset_r2 = model_result
-
-    model_name = st.text_input(f"Enter name for Model {model_index + 1}:", key=f"model_name_input_{model_index}")
-    
-    if not model_name:
-        st.warning("Please enter a name for the model before saving.")
-        return
-
-    try:
-        user_id = st.session_state.get('user_id')
-        r2_threshold = st.session_state.ga_optimizer.get('r2_threshold')
-        prob_crossover = st.session_state.ga_optimizer.get('prob_crossover')
-        prob_mutation = st.session_state.ga_optimizer.get('prob_mutation')
-        num_generations = st.session_state.ga_optimizer.get('num_generations')
-        population_size = st.session_state.ga_optimizer.get('population_size')
-        regression_type = st.session_state.ga_optimizer.get('regression_type')
-        
-        well_ids = st.session_state.ga_optimizer.get('selected_wells', [])
-        excluded_stages = [excluded_rows]  # Assuming excluded_rows is a list of stages for all wells
-
-        if not all([user_id, r2_threshold, prob_crossover, prob_mutation, num_generations, population_size, regression_type, well_ids]):
-            raise ValueError("One or more required parameters are missing.")
-
-        with st.spinner("Saving model..."):
-            model_id = store_ga_model(
-                user_id, model_name, weighted_r2_score, full_dataset_r2, response_equation,
-                r2_threshold, prob_crossover, prob_mutation, num_generations, population_size,
-                regression_type, selected_feature_names, well_ids, excluded_stages
-            )
-        
-        if model_id:
-            st.success(f"Model '{model_name}' saved successfully with ID: {model_id}")
-            log_message(logging.INFO, f"Model saved successfully. Name: {model_name}, ID: {model_id}")
-        else:
-            st.error("Failed to save the model. The database operation did not return a model ID.")
-            log_message(logging.ERROR, f"Failed to save model '{model_name}'. No model ID returned.")
-
-    except ValueError as ve:
-        st.error(f"Error saving model: {str(ve)}")
-        log_message(logging.ERROR, f"Error saving model '{model_name}': {str(ve)}")
-    except Exception as e:
-        st.error("An unexpected error occurred while saving the model. Please try again or contact support.")
-        log_message(logging.ERROR, f"Unexpected error saving model '{model_name}': {str(e)}", exc_info=True)
-
+# Monotonicity Check
 def monotonicity_check_modal():
     st.markdown("""
     <style>
@@ -318,6 +284,7 @@ def monotonicity_check_modal():
 
     stages = get_well_stages(well_id)
     selected_stages = st.multiselect("Select Stage(s)", options=stages, key="monotonicity_stage_select")
+
 
     if 'results' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['results']:
         model_options = [f"Model {i+1} (R²: {result[1]:.4f})" for i, result in enumerate(st.session_state.ga_optimizer['results'])]
@@ -354,24 +321,15 @@ def monotonicity_check_modal():
         st.write("Equation being used for monotonicity check:")
         st.code(equation_to_use)
     
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Run Monotonicity Check"):
+   
+    if st.button("Run Monotonicity Check"):
             if equation_to_use is None:
                 st.error("Please provide a valid equation before checking monotonicity.")
             elif not selected_stages:
                 st.error("Please select at least one stage for monotonicity check.")
             else:
-                run_monotonicity_check(well_id, selected_stages, equation_to_use)
+                run_monotonicity_check(well_id, selected_stages, equation_to_use)        
     
-    with col2:
-        if st.button("Save Model"):
-            if selected_model != "Custom Equation":
-                model_index = int(selected_model.split()[1]) - 1
-                save_model(model_index)
-            else:
-                st.warning("Cannot save a custom equation. Please run GA optimization to generate a model first.")
-
     display_monotonicity_results(selected_stages)
 
 def run_monotonicity_check(well_id, selected_stages, equation_to_use):
@@ -423,7 +381,7 @@ def display_monotonicity_results(selected_stages):
 
 def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, excluded_rows, regression_type, num_models):
     full_zscored_df = df.copy()
-    df = df.drop(excluded_rows)
+    df = df[~df['data_id'].isin(excluded_rows)]
     
     start_time = time.time()
     timer_placeholder = st.empty()

@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, Json
 from streamlit_authenticator.utilities.hasher import Hasher
 import uuid
 import streamlit as st
@@ -158,7 +158,7 @@ def get_modeling_data(well_id):
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("""
-            SELECT tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, total_slurry_dp, median_slurry, stage
+            SELECT data_id, well_id, tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, total_slurry_dp, median_slurry, stage
             FROM data_for_modeling
             WHERE well_id = %s
             ORDER BY stage ASC
@@ -326,35 +326,4 @@ def create_user(username, email, name, password, is_admin, access_list):
         print(f"Error creating user: {error}")
         return False
 
- # function to store the ga model created by the user   
-def store_ga_model(user_id, model_name, weighted_r2_score, full_dataset_r2_score, response_equation, 
-                   r2_threshold, prob_crossover, prob_mutation, num_generations, population_size, 
-                   regression_type, selected_features, well_ids, excluded_stages):
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # Prepare the well_ids and excluded_stages as JSON
-        well_data = json.dumps({str(well_id): stages for well_id, stages in zip(well_ids, excluded_stages)})
-        
-        # Call the PostgreSQL function
-        cur.execute("""
-            SELECT store_ga_model(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) AS model_id
-        """, (
-            user_id, model_name, weighted_r2_score, full_dataset_r2_score, response_equation, r2_threshold,
-            prob_crossover, prob_mutation, num_generations, population_size,
-            regression_type, json.dumps(selected_features), well_data, json.dumps(excluded_stages)
-        ))
-        
-        # Fetch the result (model_id)
-        result = cur.fetchone()
-        model_id = result['model_id'] if result else None
-        
-        conn.commit()
-        cur.close()
-        conn.close()
-        
-        return model_id
-    except Exception as error:
-        print(f"Error storing GA model: {error}")
-        return None
+

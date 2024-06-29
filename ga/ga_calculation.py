@@ -13,6 +13,8 @@ from utils import plotting
 warnings.filterwarnings('ignore')
 
 def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, timer_placeholder, regression_type):
+    predictors = [p for p in predictors if p not in ['data_id', 'well_id']]
+    
     X = df[predictors].values
     y = df[target_column].values
 
