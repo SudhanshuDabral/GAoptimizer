@@ -1,4 +1,4 @@
-import traceback
+import warnings
 import streamlit as st
 import pandas as pd
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
@@ -71,6 +71,7 @@ def main(authentication_status):
         monotonicity_check_modal()
 
 def ga_optimization_section():
+
     wells = get_well_details()
     well_options = {well['well_name']: well['well_id'] for well in wells}
     
@@ -238,7 +239,8 @@ def display_ga_results():
             st.dataframe(errors_df, use_container_width=True, hide_index=True)
 
             st.write("Actual vs Predicted Productivity Plot")
-            fig = plot_actual_vs_predicted(zscored_df['Productivity'], predicted_values, excluded_rows, zscored_df['Well Name'], zscored_df['stage'])
+            fig = plot_actual_vs_predicted(errors_df)
+                
             st.plotly_chart(fig, use_container_width=True)
 
     if st.session_state.ga_optimizer['results']:
@@ -260,6 +262,8 @@ def display_ga_results():
             )
     else:
         st.warning("No results available to download.")
+
+log_message(logging.INFO, "Finished displaying GA results")
 
 # Monotonicity Check
 def monotonicity_check_modal():
@@ -387,25 +391,41 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
     timer_placeholder = st.empty()
 
     while len(st.session_state.ga_optimizer['results']) < num_models and st.session_state.ga_optimizer['running']:
-        result = run_ga_optimization(
-            df, target_column, predictors, r2_threshold, coef_range,
-            prob_crossover, prob_mutation, num_generations, population_size,
-            timer_placeholder, regression_type
-        )
+        try:
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                result = run_ga_optimization(
+                    df, target_column, predictors, r2_threshold, coef_range,
+                    prob_crossover, prob_mutation, num_generations, population_size,
+                    timer_placeholder, regression_type
+                )
+                if w:
+                    for warning in w:
+                        log_message(logging.WARNING, f"Warning in run_ga_optimization: {warning.message}")
 
-        if result:
-            best_ind, best_r2_score, response_equation, selected_feature_names, errors_df, full_dataset_r2 = result
-            
-            predicted_values = calculate_predicted_productivity(full_zscored_df, response_equation)
-            
-            result_with_predictions = (best_ind, best_r2_score, response_equation, selected_feature_names, errors_df, predicted_values, full_zscored_df, excluded_rows, full_dataset_r2)
-            
-            st.session_state.ga_optimizer['results'].append(result_with_predictions)
-            log_message(logging.INFO, f"Model generated (Weighted R²: {best_r2_score:.4f}, Full Dataset R²: {full_dataset_r2:.4f})")
-            st.success(f"Model {len(st.session_state.ga_optimizer['results'])} generated (Weighted R²: {best_r2_score:.4f}, Full Dataset R²: {full_dataset_r2:.4f})")
-        else:
-            log_message(logging.WARNING, "GA optimization did not produce a valid result. Retrying...")
-            st.warning("GA optimization did not produce a valid result. Retrying...")
+            if result:
+                try:
+                    best_ind, best_r2_score, response_equation, selected_feature_names, errors_df, full_dataset_r2 = result
+                except ValueError as e:
+                    log_message(logging.ERROR, f"Error unpacking result: {str(e)}")
+                    continue
+
+                try:
+                    predicted_values = calculate_predicted_productivity(full_zscored_df, response_equation)
+                except Exception as e:
+                    log_message(logging.ERROR, f"Error calculating predicted values: {str(e)}")
+                    continue
+
+                result_with_predictions = (best_ind, best_r2_score, response_equation, selected_feature_names, errors_df, predicted_values, full_zscored_df, excluded_rows, full_dataset_r2)
+                
+                st.session_state.ga_optimizer['results'].append(result_with_predictions)
+                log_message(logging.INFO, f"Model generated (Weighted R²: {best_r2_score:.4f}, Full Dataset R²: {full_dataset_r2:.4f})")
+                st.success(f"Model {len(st.session_state.ga_optimizer['results'])} generated (Weighted R²: {best_r2_score:.4f}, Full Dataset R²: {full_dataset_r2:.4f})")
+            else:
+                log_message(logging.WARNING, "GA optimization did not produce a valid result. Retrying...")
+                st.warning("GA optimization did not produce a valid result. Retrying...")
+        except Exception as e:
+            log_message(logging.ERROR, f"Error in GA optimization: {str(e)}")
 
     st.session_state.ga_optimizer['running'] = False
     log_message(logging.DEBUG, "GA optimization completed")
