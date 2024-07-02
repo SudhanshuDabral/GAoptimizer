@@ -389,6 +389,11 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
     
     start_time = time.time()
     timer_placeholder = st.empty()
+    plot_placeholder = st.empty()
+
+    r2_values = []
+    iterations = []
+    model_markers = {}
 
     while len(st.session_state.ga_optimizer['results']) < num_models and st.session_state.ga_optimizer['running']:
         try:
@@ -397,7 +402,9 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
                 result = run_ga_optimization(
                     df, target_column, predictors, r2_threshold, coef_range,
                     prob_crossover, prob_mutation, num_generations, population_size,
-                    timer_placeholder, regression_type
+                    timer_placeholder, regression_type,
+                    len(st.session_state.ga_optimizer['results']),
+                    r2_values, iterations, model_markers, plot_placeholder
                 )
                 if w:
                     for warning in w:
@@ -419,7 +426,7 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
                 result_with_predictions = (best_ind, best_r2_score, response_equation, selected_feature_names, errors_df, predicted_values, full_zscored_df, excluded_rows, full_dataset_r2)
                 
                 st.session_state.ga_optimizer['results'].append(result_with_predictions)
-                log_message(logging.INFO, f"Model generated (Weighted R²: {best_r2_score:.4f}, Full Dataset R²: {full_dataset_r2:.4f})")
+                log_message(logging.INFO, f"Model {len(st.session_state.ga_optimizer['results'])} generated (Weighted R²: {best_r2_score:.4f}, Full Dataset R²: {full_dataset_r2:.4f})")
                 st.success(f"Model {len(st.session_state.ga_optimizer['results'])} generated (Weighted R²: {best_r2_score:.4f}, Full Dataset R²: {full_dataset_r2:.4f})")
             else:
                 log_message(logging.WARNING, "GA optimization did not produce a valid result. Retrying...")

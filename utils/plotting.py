@@ -6,15 +6,35 @@ import pandas as pd
 r2_values = []
 iterations = []
 
-def update_plot(iterations, r2_values, plot_placeholder):
+def update_plot(iterations, r2_values, plot_placeholder, model_markers):
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=iterations, y=r2_values,
-                             mode='lines+markers',
-                             name='R² vs Iteration'))
 
-    fig.update_layout(title='R² Values vs Iteration',
-                      xaxis_title='Iteration',
-                      yaxis_title='R² Value')
+    # Add the main trace for R² values
+    fig.add_trace(go.Scatter(
+        x=iterations,
+        y=r2_values,
+        mode='lines+markers',
+        name='R² vs Iteration',
+        line=dict(color='blue'),
+        marker=dict(size=6)
+    ))
+
+    # Add markers for model creation points
+    for model_num, (iteration, r2) in model_markers.items():
+        fig.add_trace(go.Scatter(
+            x=[iteration],
+            y=[r2],
+            mode='markers',
+            name=f'Model {model_num}',
+            marker=dict(size=12, symbol='star', color='red')
+        ))
+
+    fig.update_layout(
+        title='R² Values vs Iteration (All Models)',
+        xaxis_title='Iteration',
+        yaxis_title='R² Value',
+        showlegend=True
+    )
 
     plot_placeholder.plotly_chart(fig, use_container_width=True)
 

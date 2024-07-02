@@ -38,8 +38,8 @@ if 'FitnessMax' not in creator.__dict__:
 if 'Individual' not in creator.__dict__:
     creator.create("Individual", list, fitness=creator.FitnessMax)
 
-def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, timer_placeholder, regression_type):
-    log_message(logging.INFO, "Starting GA optimization")
+def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, timer_placeholder, regression_type, model_number, r2_values, iterations, model_markers, plot_placeholder):
+    log_message(logging.INFO, f"Starting GA optimization for Model {model_number + 1}")
     with warnings.catch_warnings(record=True) as caught_warnings:
         warnings.simplefilter("always")
 
@@ -115,14 +115,10 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
             valid_coefficients = False
             iteration = 0
 
-            plot_placeholder = st.empty()
             equation_placeholder = st.empty()
             selected_features_placeholder = st.empty()
 
             start_time = time.time()
-
-            r2_values = []
-            iterations = []
 
             while (best_weighted_r2_score < r2_threshold or not valid_coefficients) and st.session_state.ga_optimizer['running']:
                 iteration += 1
@@ -173,39 +169,41 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
                         best_selected_features = selected_feature_names
                         best_errors_df = errors_df
 
-                        # equation_placeholder.write(f"Response Equation: {equation}")
-                        # selected_features_placeholder.write(f"Selected Features: {selected_feature_names}")
-
-                        log_message(logging.INFO, f"New best model found (R² score: {best_weighted_r2_score:.4f})")
+                        log_message(logging.INFO, f"New best model found for Model {model_number + 1} (R² score: {best_weighted_r2_score:.4f})")
 
                 r2_values.append(best_weighted_r2_score)
                 iterations.append(iteration)
-                plotting.update_plot(iterations, r2_values, plot_placeholder)
+                plotting.update_plot(iterations, r2_values, plot_placeholder, model_markers)
                 
                 elapsed_time = time.time() - start_time
                 timer_placeholder.write(f"Time Elapsed: {elapsed_time:.2f} seconds")
 
                 if not st.session_state.ga_optimizer['running']:
-                    log_message(logging.INFO, "GA optimization stopped by user")
+                    log_message(logging.INFO, f"GA optimization stopped by user for Model {model_number + 1}")
                     break
+
+            # When a valid model is found, add it to model_markers
+            if valid_coefficients:
+                model_markers[model_number + 1] = (iteration, best_weighted_r2_score)
+                plotting.update_plot(iterations, r2_values, plot_placeholder, model_markers)
 
             # Calculate R² score on entire dataset
             if best_model is not None:
                 X_full = X_poly[:, best_model.features]
                 y_pred_full = best_model.model.predict(X_full)
                 full_dataset_r2 = r2_score(y, y_pred_full)
-                log_message(logging.INFO, f"GA optimization completed. Full dataset R²: {full_dataset_r2:.4f}")
+                log_message(logging.INFO, f"GA optimization completed for Model {model_number + 1}. Full dataset R²: {full_dataset_r2:.4f}")
             else:
                 full_dataset_r2 = 0
-                log_message(logging.WARNING, "GA optimization completed. No valid model found")
+                log_message(logging.WARNING, f"GA optimization completed for Model {model_number + 1}. No valid model found")
 
         except Exception as e:
-            log_message(logging.ERROR, f"Error during GA optimization: {str(e)}")
+            log_message(logging.ERROR, f"Error during GA optimization for Model {model_number + 1}: {str(e)}")
             return None
 
         if caught_warnings:
             for warn in caught_warnings:
-                log_message(logging.WARNING, f"Warning during GA run: {warn.message}")
+                log_message(logging.WARNING, f"Warning during GA run for Model {model_number + 1}: {warn.message}")
 
     if not st.session_state.ga_optimizer['running']:
         return None
