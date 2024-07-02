@@ -38,7 +38,7 @@ if 'FitnessMax' not in creator.__dict__:
 if 'Individual' not in creator.__dict__:
     creator.create("Individual", list, fitness=creator.FitnessMax)
 
-def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, timer_placeholder, regression_type, model_number, r2_values, iterations, model_markers, plot_placeholder):
+def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, timer_placeholder, regression_type, model_number, r2_values, iterations, model_markers, plot_placeholder, start_iteration):
     log_message(logging.INFO, f"Starting GA optimization for Model {model_number + 1}")
     with warnings.catch_warnings(record=True) as caught_warnings:
         warnings.simplefilter("always")
@@ -113,7 +113,7 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
             best_selected_features = None
             best_errors_df = None
             valid_coefficients = False
-            iteration = 0
+            iteration = start_iteration  # Start from the provided iteration number
 
             equation_placeholder = st.empty()
             selected_features_placeholder = st.empty()
@@ -208,7 +208,7 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
     if not st.session_state.ga_optimizer['running']:
         return None
 
-    return best_model, best_weighted_r2_score, best_equation, best_selected_features, best_errors_df, full_dataset_r2
+    return best_model, best_weighted_r2_score, best_equation, best_selected_features, best_errors_df, full_dataset_r2, iteration
 
 if __name__ == "__main__":
     # This block can be used for testing the function independently

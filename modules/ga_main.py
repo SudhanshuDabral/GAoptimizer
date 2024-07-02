@@ -5,6 +5,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from utils.db import get_well_details, get_modeling_data, get_well_stages, get_array_data
 from logging.handlers import RotatingFileHandler
 import logging
+from utils import plotting
 from ga.ga_calculation import run_ga as run_ga_optimization
 from ga.check_monotonicity import check_monotonicity as check_monotonicity_func
 from utils.plotting import plot_column, plot_actual_vs_predicted
@@ -48,7 +49,10 @@ def initialize_ga_state():
             'prob_crossover': 0.8,
             'prob_mutation': 0.2,
             'num_generations': 40,
-            'population_size': 50
+            'population_size': 50,
+            # 'iterations': [],
+            # 'r2_values': [],
+            # 'model_markers': {}
         }
 
 def main(authentication_status):
@@ -391,9 +395,14 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
     timer_placeholder = st.empty()
     plot_placeholder = st.empty()
 
-    r2_values = []
-    iterations = []
-    model_markers = {}
+    # Initialize continuous optimization tracking variables
+    if 'continuous_optimization' not in st.session_state:
+        st.session_state.continuous_optimization = {
+            'r2_values': [],
+            'iterations': [],
+            'model_markers': {},
+            'current_iteration': 0
+        }
 
     while len(st.session_state.ga_optimizer['results']) < num_models and st.session_state.ga_optimizer['running']:
         try:
@@ -404,7 +413,11 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
                     prob_crossover, prob_mutation, num_generations, population_size,
                     timer_placeholder, regression_type,
                     len(st.session_state.ga_optimizer['results']),
-                    r2_values, iterations, model_markers, plot_placeholder
+                    st.session_state.continuous_optimization['r2_values'],
+                    st.session_state.continuous_optimization['iterations'],
+                    st.session_state.continuous_optimization['model_markers'],
+                    plot_placeholder,
+                    st.session_state.continuous_optimization['current_iteration']
                 )
                 if w:
                     for warning in w:
@@ -412,7 +425,9 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
 
             if result:
                 try:
-                    best_ind, best_r2_score, response_equation, selected_feature_names, errors_df, full_dataset_r2 = result
+                    best_ind, best_r2_score, response_equation, selected_feature_names, errors_df, full_dataset_r2, last_iteration = result
+                    # Update the current_iteration with the value returned from run_ga
+                    st.session_state.continuous_optimization['current_iteration'] = last_iteration
                 except ValueError as e:
                     log_message(logging.ERROR, f"Error unpacking result: {str(e)}")
                     continue
