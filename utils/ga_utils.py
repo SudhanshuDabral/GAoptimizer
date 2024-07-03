@@ -37,7 +37,10 @@ def calculate_df_statistics(df):
         if col in df.columns:
             stats[col] = {
                 'mean': df[col].mean(),
-                'std': df[col].std(ddof=1)
+                'std': df[col].std(ddof=1),
+                'min': df[col].min(),
+                'max': df[col].max(),
+                'median': df[col].median(),
             }
     return stats
 
