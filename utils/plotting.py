@@ -146,3 +146,39 @@ def plot_actual_vs_predicted(error_df):
     )
 
     return fig
+
+#function to create a tornado chart for model sensitivity
+def create_tornado_chart(sensitivity_df, baseline_productivity):
+    sensitivity_df['Min_Diff'] = baseline_productivity - sensitivity_df['Min Productivity']
+    sensitivity_df['Max_Diff'] = sensitivity_df['Max Productivity'] - baseline_productivity
+    
+    sensitivity_df = sensitivity_df.sort_values('Max_Diff', ascending=True)
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Bar(
+        y=sensitivity_df['Attribute'],
+        x=sensitivity_df['Min_Diff'],
+        name='Minimum',
+        orientation='h',
+        marker=dict(color='blue')
+    ))
+    
+    fig.add_trace(go.Bar(
+        y=sensitivity_df['Attribute'],
+        x=sensitivity_df['Max_Diff'],
+        name='Maximum',
+        orientation='h',
+        marker=dict(color='red')
+    ))
+    
+    fig.update_layout(
+        title='Tornado Chart - Model Sensitivity',
+        xaxis_title='Change in Productivity',
+        yaxis_title='Attributes',
+        barmode='relative',
+        height=500,
+        width=800
+    )
+    
+    return fig

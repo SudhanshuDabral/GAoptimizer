@@ -44,6 +44,77 @@ def calculate_df_statistics(df):
             }
     return stats
 
+def calculate_zscoredf_statistics(df):
+    columns_to_process = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 'total_slurry_dp', 'median_slurry']
+    stats = {}
+    for col in columns_to_process:
+        if col in df.columns:
+            stats[col] = {
+                'mean': df[col].mean(),
+                'std': df[col].std(ddof=1),
+                'min': df[col].min(),
+                'max': df[col].max(),
+                'median': df[col].median(),
+            }
+    return stats
+
+# function to calculate model sensitivity for the data for modelling used in ga_main.py
+def calculate_productivity(values, response_equation):
+    # Modify the response equation to use 'result' instead of 'Computed_Productivity' or 'Corrected_Prod'
+    modified_equation = response_equation.replace("Computed_Productivity", "result").replace("Corrected_Prod", "result")
+    
+    # Extract the right side of the equation
+    right_side = modified_equation.split('=')[1].strip()
+    
+    # Replace attribute names with their values
+    for attr, value in values.items():
+        right_side = right_side.replace(attr, str(value))
+    
+    # Handle squared terms
+    right_side = re.sub(r'(\d+(\.\d+)?)\s*\*\s*(\w+)\s*\*\s*(\w+)', r'\1 * (\3 * \4)', right_side)
+    
+    # Evaluate the expression
+    try:
+        result = eval(right_side)
+        
+        if np.isclose(result, 0, atol=1e-10):
+            print("Warning: Result is very close to zero. Check if this is expected.")
+        
+        return result
+    except Exception as e:
+        print(f"Error in equation evaluation: {str(e)}")
+        return None
+
+def calculate_model_sensitivity(response_equation, df_statistics):
+    attributes = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 'total_slurry_dp', 'median_slurry']
+    
+    # Calculate baseline productivity using median values
+    median_values = {attr: df_statistics[attr]['median'] for attr in attributes}
+    baseline_productivity = calculate_productivity(median_values, response_equation)
+     
+    sensitivity_data = []
+    
+    for attr in attributes:
+        # Calculate productivity with min value
+        min_values = median_values.copy()
+        min_values[attr] = df_statistics[attr]['min']
+        min_productivity = calculate_productivity(min_values, response_equation)
+        
+        # Calculate productivity with max value
+        max_values = median_values.copy()
+        max_values[attr] = df_statistics[attr]['max']
+        max_productivity = calculate_productivity(max_values, response_equation)
+        
+        sensitivity_data.append({
+            'Attribute': attr,
+            'Min Productivity': min_productivity,
+            'Max Productivity': max_productivity
+        })
+    
+    sensitivity_df = pd.DataFrame(sensitivity_data)
+    
+    return baseline_productivity, sensitivity_df
+
 
 # function to check monotonicity of the data for modelling used in ga_main.py
 def batch_monotonicity_check(stages, well_id, get_array_data_func, df_statistics, equation):

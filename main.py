@@ -210,12 +210,14 @@ def clear_ga_optimizer_state():
             'regression_type': 'FPR',
             'monotonicity_results': {},
             'df_statistics': None,
+            'zscored_statistics': None,
             'show_monotonicity': False,
             'r2_threshold': 0.55,
             'prob_crossover': 0.8,
             'prob_mutation': 0.2,
             'num_generations': 40,
-            'population_size': 50
+            'population_size': 50,
+            'show_sensitivity': False
         }
 
 def clear_data_prep_state():

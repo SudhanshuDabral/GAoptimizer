@@ -8,10 +8,11 @@ from logging.handlers import RotatingFileHandler
 import logging
 from ga.ga_calculation import run_ga as run_ga_optimization
 from ga.check_monotonicity import check_monotonicity as check_monotonicity_func
-from utils.plotting import plot_column, plot_actual_vs_predicted
-from utils.ga_utils import zscore_data, calculate_df_statistics, validate_custom_equation, calculate_predicted_productivity
+from utils.plotting import plot_column, plot_actual_vs_predicted, create_tornado_chart
+from utils.ga_utils import zscore_data, calculate_df_statistics, validate_custom_equation, calculate_predicted_productivity, calculate_model_sensitivity, calculate_zscoredf_statistics
 import time
 import os
+import numpy as np
 
 # Set up logging
 log_dir = 'logs'
@@ -44,12 +45,14 @@ def initialize_ga_state():
             'regression_type': 'FPR',
             'monotonicity_results': {},
             'df_statistics': None,
+            'zscored_statistics': None,
             'show_monotonicity': False,
             'r2_threshold': 0.55,
             'prob_crossover': 0.8,
             'prob_mutation': 0.2,
             'num_generations': 40,
             'population_size': 50,
+            'show_sensitivity': False
         }
 
 def main(authentication_status):
@@ -61,8 +64,14 @@ def main(authentication_status):
     initialize_ga_state()
 
     st.sidebar.title("GA Optimizer Menu")
+    
     if st.sidebar.button("Monotonicity Check", key="fab_monotonicity"):
         st.session_state.ga_optimizer['show_monotonicity'] = not st.session_state.ga_optimizer['show_monotonicity']
+        st.session_state.ga_optimizer['show_sensitivity'] = False  # Close other section
+    
+    if st.sidebar.button("Model Sensitivity", key="fab_sensitivity"):
+        st.session_state.ga_optimizer['show_sensitivity'] = not st.session_state.ga_optimizer['show_sensitivity']
+        st.session_state.ga_optimizer['show_monotonicity'] = False  # Close other section
 
     st.title("Hydraulic Fracturing Productivity Model Optimizer (HF-PMO)")
 
@@ -70,6 +79,9 @@ def main(authentication_status):
 
     if st.session_state.ga_optimizer['show_monotonicity']:
         monotonicity_check_modal()
+
+    if st.session_state.ga_optimizer['show_sensitivity']:
+        model_sensitivity_section()
 
 @contextlib.contextmanager
 def suppress_st_aggrid_warnings():
@@ -133,6 +145,7 @@ def ga_optimization_section():
                     else:
                         zscored_df = zscore_data(edited_df)
                         st.session_state.ga_optimizer['zscored_df'] = zscored_df
+                        st.session_state.ga_optimizer['zscored_statistics'] = calculate_zscoredf_statistics(st.session_state.ga_optimizer['zscored_df'])
                         st.session_state.ga_optimizer['show_zscore'] = True
                         st.success("Data has been Z-Scored.")
                         st.rerun()
@@ -420,6 +433,48 @@ def display_monotonicity_results(selected_stages):
                 st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("Run Monotonicity check to see results.")
+
+# Model Sensitivity Analysis
+def model_sensitivity_section():
+    st.markdown('<hr class="section-partition">', unsafe_allow_html=True)
+    st.markdown("## Model Sensitivity Analysis")
+
+    if 'results' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['results']:
+        model_options = [f"Model {i+1} (R²: {result[1]:.4f})" for i, result in enumerate(st.session_state.ga_optimizer['results'])]
+        selected_model = st.selectbox("Select Model for Sensitivity Analysis", options=model_options)
+        
+        if selected_model:
+            model_index = int(selected_model.split()[1]) - 1
+            response_equation = st.session_state.ga_optimizer['results'][model_index][2]
+            
+            st.write("Selected Model Equation:")
+            st.code(response_equation)
+            
+            if st.button("Run Sensitivity Analysis"):
+                try:
+                    baseline_productivity, sensitivity_df = calculate_model_sensitivity(response_equation, st.session_state.ga_optimizer['zscored_statistics'])
+                    
+                    if baseline_productivity is not None and not np.isclose(baseline_productivity, 0, atol=1e-10):
+                        st.write(f"Baseline Productivity (using median values): {baseline_productivity:.4f}")
+                        
+                        st.write("Sensitivity Analysis Results:")
+                        st.dataframe(sensitivity_df, use_container_width=True, hide_index=True)
+                        
+                        if not sensitivity_df['Min Productivity'].isna().all() and not sensitivity_df['Max Productivity'].isna().all():
+                            fig = create_tornado_chart(sensitivity_df, baseline_productivity)
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.warning("Unable to create tornado chart due to invalid productivity values.")
+                    else:
+                        st.error("Baseline productivity is zero or None. Please check the model equation and input values.")
+                        st.write("Debug Information:")
+                        st.json(st.session_state.ga_optimizer['df_statistics'])
+                except Exception as e:
+                    st.error(f"An error occurred during sensitivity analysis: {str(e)}")
+                    log_message(logging.ERROR, f"Error in sensitivity analysis: {str(e)}")
+    else:
+        st.warning("No models available. Please run the GA optimization first.")
+
 
 def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, excluded_rows, regression_type, num_models):
     full_zscored_df = df.copy()
