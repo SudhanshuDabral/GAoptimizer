@@ -143,16 +143,21 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
                     
                     if valid_coefficients:
                         equation = f"Corrected_Prod = {intercept:.4f}"
-                        for coef, feature in zip(coefficients, selected_feature_names):
+                        selected_feature_names = []
+                        for coef, feature in zip(coefficients, [feature_names[i] for i in selected_features]):
                             terms = feature.split()
                             if len(terms) == 1:
                                 equation += f" + ({coef:.4f} * {terms[0]})"
+                                selected_feature_names.append(terms[0])
                             elif len(terms) == 2:
                                 equation += f" + ({coef:.4f} * {terms[0]} * {terms[1]})"
+                                selected_feature_names.append(f"{terms[0]} * {terms[1]}")
                             elif len(terms) == 3 and terms[1] == terms[2]:
                                 equation += f" + ({coef:.4f} * {terms[0]} * {terms[0]})"
+                                selected_feature_names.append(f"{terms[0]}^2")
                             else:
                                 equation += f" + ({coef:.4f} * {' * '.join(terms)})"
+                                selected_feature_names.append(' * '.join(terms))
                         
                         X_sub = X_poly[:, selected_features]
                         y_pred = model.predict(X_sub)
@@ -170,7 +175,7 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
                         best_errors_df = errors_df
 
                         log_message(logging.INFO, f"New best model found for Model {model_number + 1} (R² score: {best_weighted_r2_score:.4f})")
-
+                        
                 r2_values.append(best_weighted_r2_score)
                 iterations.append(iteration)
                 plotting.update_plot(iterations, r2_values, plot_placeholder, model_markers)

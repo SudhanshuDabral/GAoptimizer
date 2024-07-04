@@ -217,7 +217,6 @@ def clear_ga_optimizer_state():
             'prob_mutation': 0.2,
             'num_generations': 40,
             'population_size': 50,
-            'show_sensitivity': False
         }
 
 def clear_data_prep_state():

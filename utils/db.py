@@ -343,30 +343,3 @@ def create_user(username, email, name, password, is_admin, access_list):
     except Exception as error:
         log_message(logging.ERROR, f"Error creating user {username}: {str(error)}")
         return False
-
-def save_ga_model(model_name, weighted_r2_score, full_dataset_r2, response_equation,
-                  regression_type, r2_threshold, prob_crossover, prob_mutation,
-                  num_generations, population_size, created_by, features,
-                  data_ids, excluded_data_ids):
-    log_message(logging.INFO, f"Saving GA model: {model_name}")
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        
-        cur.execute("""
-            CALL save_ga_model(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (
-            model_name, weighted_r2_score, full_dataset_r2, response_equation,
-            regression_type, r2_threshold, prob_crossover, prob_mutation,
-            num_generations, population_size, created_by, features,
-            data_ids, excluded_data_ids
-        ))
-        
-        conn.commit()
-        cur.close()
-        conn.close()
-        log_message(logging.INFO, f"Successfully saved GA model: {model_name}")
-        return True
-    except Exception as error:
-        log_message(logging.ERROR, f"Error saving GA model {model_name}: {str(error)}")
-        return False

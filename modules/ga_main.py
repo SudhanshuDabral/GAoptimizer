@@ -8,7 +8,8 @@ from logging.handlers import RotatingFileHandler
 import logging
 from ga.ga_calculation import run_ga as run_ga_optimization
 from ga.check_monotonicity import check_monotonicity as check_monotonicity_func
-from utils.plotting import plot_column, plot_actual_vs_predicted, create_tornado_chart
+from utils.plotting import (plot_column, plot_actual_vs_predicted, create_tornado_chart,
+                            create_feature_importance_chart, create_elasticity_analysis)
 from utils.ga_utils import zscore_data, calculate_df_statistics, validate_custom_equation, calculate_predicted_productivity, calculate_model_sensitivity, calculate_zscoredf_statistics
 import time
 import os
@@ -52,7 +53,6 @@ def initialize_ga_state():
             'prob_mutation': 0.2,
             'num_generations': 40,
             'population_size': 50,
-            'show_sensitivity': False
         }
 
 def main(authentication_status):
@@ -64,14 +64,9 @@ def main(authentication_status):
     initialize_ga_state()
 
     st.sidebar.title("GA Optimizer Menu")
-    
     if st.sidebar.button("Monotonicity Check", key="fab_monotonicity"):
         st.session_state.ga_optimizer['show_monotonicity'] = not st.session_state.ga_optimizer['show_monotonicity']
-        st.session_state.ga_optimizer['show_sensitivity'] = False  # Close other section
-    
-    if st.sidebar.button("Model Sensitivity", key="fab_sensitivity"):
-        st.session_state.ga_optimizer['show_sensitivity'] = not st.session_state.ga_optimizer['show_sensitivity']
-        st.session_state.ga_optimizer['show_monotonicity'] = False  # Close other section
+
 
     st.title("Hydraulic Fracturing Productivity Model Optimizer (HF-PMO)")
 
@@ -79,9 +74,6 @@ def main(authentication_status):
 
     if st.session_state.ga_optimizer['show_monotonicity']:
         monotonicity_check_modal()
-
-    if st.session_state.ga_optimizer['show_sensitivity']:
-        model_sensitivity_section()
 
 @contextlib.contextmanager
 def suppress_st_aggrid_warnings():
@@ -111,7 +103,13 @@ def ga_optimization_section():
                 return
 
             df = consolidated_data.sort_values(by=['Well Name', 'stage'])
-            df['Productivity'] = ""
+            # Initialize Productivity column if it doesn't exist in session state
+            if 'edited_df' not in st.session_state.ga_optimizer or st.session_state.ga_optimizer['edited_df'] is None:
+                df['Productivity'] = ""
+                st.session_state.ga_optimizer['edited_df'] = df
+            else:
+                # Use the existing Productivity values from session state
+                df = st.session_state.ga_optimizer['edited_df']
 
             if st.session_state.ga_optimizer['show_zscore']:
                 tab1, tab2 = st.tabs(["Data Preview", "Z-Score Data"])
@@ -128,12 +126,20 @@ def ga_optimization_section():
                 for col in df.columns:
                     if col not in ['Productivity', 'Well Name', 'data_id', 'well_id']:
                         gb.configure_column(col, editable=False)
-                gb.configure_grid_options(domLayout='normal', suppressMovableColumns=True, enableRangeSelection=True, clipboardDelimiter=',')
+                gb.configure_grid_options(domLayout='normal', 
+                                          suppressMovableColumns=True, 
+                                          enableRangeSelection=True, 
+                                          clipboardDelimiter=',',
+                                          columnSizeDefault=150,  # Set default column width
+                                          autoSizeColumns=True)  # Enable auto-sizing
                 grid_options = gb.build()
                 
-                with suppress_st_aggrid_warnings():
-                    grid_response = AgGrid(df, gridOptions=grid_options, update_mode=GridUpdateMode.VALUE_CHANGED,
-                                           height=400, allow_unsafe_jscode=True)
+                grid_response = AgGrid(df, 
+                                       gridOptions=grid_options, 
+                                       update_mode=GridUpdateMode.VALUE_CHANGED,
+                                       fit_columns_on_grid_load=True,  # Fit columns on load
+                                       height=400, 
+                                       allow_unsafe_jscode=True)
                 
                 edited_df = pd.DataFrame(grid_response['data'])
                 st.session_state.ga_optimizer['edited_df'] = edited_df
@@ -159,12 +165,17 @@ def ga_optimization_section():
                     gb.configure_column("data_id", hide=True)
                     gb.configure_column("well_id", hide=True)
                     gb.configure_column("tee", checkboxSelection=True, headerCheckboxSelection=True)
-                    gb.configure_grid_options(suppressRowClickSelection=True)
+                    gb.configure_grid_options(suppressRowClickSelection=True,
+                                              columnSizeDefault=150,  # Set default column width
+                                              autoSizeColumns=True)  # Enable auto-sizing
                     grid_options = gb.build()
                     
-                    with suppress_st_aggrid_warnings():
-                        grid_response = AgGrid(st.session_state.ga_optimizer['zscored_df'], gridOptions=grid_options,
-                                               update_mode=GridUpdateMode.SELECTION_CHANGED, height=400, allow_unsafe_jscode=True)
+                    grid_response = AgGrid(st.session_state.ga_optimizer['zscored_df'], 
+                                           gridOptions=grid_options,
+                                           update_mode=GridUpdateMode.SELECTION_CHANGED, 
+                                           fit_columns_on_grid_load=True,  # Fit columns on load
+                                           height=400, 
+                                           allow_unsafe_jscode=True)
                     
                     selected_rows = pd.DataFrame(grid_response['selected_rows'])
                     
@@ -217,8 +228,14 @@ def ga_optimization_section():
                 if st.button("Start GA Optimization", key="start_button", disabled=st.session_state.ga_optimizer['running']):
                     with st.spinner('Running Genetic Algorithm...'):
                         st.session_state.ga_optimizer['running'] = True
-                        st.session_state.ga_optimizer['results'] = []  # Reset results
-                        st.rerun()
+                        st.session_state.ga_optimizer['results'] = [] 
+                        st.session_state.continuous_optimization = {
+                                                    'r2_values': [],
+                                                    'iterations': [],
+                                                    'model_markers': {},
+                                                    'current_iteration': 0
+                                                } # Reset results
+                                    
 
             with col2:
                 if st.button("Stop GA Optimization", key="stop_button", disabled=not st.session_state.ga_optimizer['running']):
@@ -283,8 +300,43 @@ def display_ga_results():
 
                     st.write("Actual vs Predicted Productivity Plot")
                     fig = plot_actual_vs_predicted(errors_df)
-                        
                     st.plotly_chart(fig, use_container_width=True)
+
+                    # Model Sensitivity Analysis
+                    st.write("Model Sensitivity Analysis")
+                    try:
+                        baseline_productivity, sensitivity_df = calculate_model_sensitivity(response_equation, st.session_state.ga_optimizer['zscored_statistics'])
+                        
+                        if baseline_productivity is not None and not np.isclose(baseline_productivity, 0, atol=1e-10):
+                            st.write(f"Baseline Productivity (using median values): {baseline_productivity:.4f}")
+                            
+                            st.write("Sensitivity Analysis Results:")
+                            st.dataframe(sensitivity_df, use_container_width=True, hide_index=True)
+                            
+                            if not sensitivity_df['Min Productivity'].isna().all() and not sensitivity_df['Max Productivity'].isna().all():
+                                fig = create_tornado_chart(sensitivity_df, baseline_productivity)
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.warning("Unable to create tornado chart due to invalid productivity values.")
+                        else:
+                            st.error("Baseline productivity is zero or None. Please check the model equation and input values.")
+
+                        show_more_visuals = st.button(f"Show More Model Sensitivity Visuals for Model {i+1}", key=f"more_visuals_{i}")
+
+                        if show_more_visuals:
+                            st.write("Feature Importance Chart")
+                            st.write("This chart shows the relative importance of each feature based on its impact on productivity.")
+                            fig_importance = create_feature_importance_chart(sensitivity_df)
+                            st.plotly_chart(fig_importance, use_container_width=True)
+
+                            st.write("Elasticity Analysis")
+                            st.write("This chart shows how sensitive the productivity is to changes in each feature.")
+                            fig_elasticity = create_elasticity_analysis(sensitivity_df, st.session_state.ga_optimizer['zscored_statistics'])
+                            st.plotly_chart(fig_elasticity, use_container_width=True)
+
+                    except Exception as e:
+                        st.error(f"An error occurred during sensitivity analysis: {str(e)}")
+                        log_message(logging.ERROR, f"Error in sensitivity analysis: {str(e)}")
 
             if st.session_state.ga_optimizer['results']:
                 with pd.ExcelWriter('genetic_algorithm_results.xlsx') as writer:
@@ -433,47 +485,6 @@ def display_monotonicity_results(selected_stages):
                 st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("Run Monotonicity check to see results.")
-
-# Model Sensitivity Analysis
-def model_sensitivity_section():
-    st.markdown('<hr class="section-partition">', unsafe_allow_html=True)
-    st.markdown("## Model Sensitivity Analysis")
-
-    if 'results' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['results']:
-        model_options = [f"Model {i+1} (R²: {result[1]:.4f})" for i, result in enumerate(st.session_state.ga_optimizer['results'])]
-        selected_model = st.selectbox("Select Model for Sensitivity Analysis", options=model_options)
-        
-        if selected_model:
-            model_index = int(selected_model.split()[1]) - 1
-            response_equation = st.session_state.ga_optimizer['results'][model_index][2]
-            
-            st.write("Selected Model Equation:")
-            st.code(response_equation)
-            
-            if st.button("Run Sensitivity Analysis"):
-                try:
-                    baseline_productivity, sensitivity_df = calculate_model_sensitivity(response_equation, st.session_state.ga_optimizer['zscored_statistics'])
-                    
-                    if baseline_productivity is not None and not np.isclose(baseline_productivity, 0, atol=1e-10):
-                        st.write(f"Baseline Productivity (using median values): {baseline_productivity:.4f}")
-                        
-                        st.write("Sensitivity Analysis Results:")
-                        st.dataframe(sensitivity_df, use_container_width=True, hide_index=True)
-                        
-                        if not sensitivity_df['Min Productivity'].isna().all() and not sensitivity_df['Max Productivity'].isna().all():
-                            fig = create_tornado_chart(sensitivity_df, baseline_productivity)
-                            st.plotly_chart(fig, use_container_width=True)
-                        else:
-                            st.warning("Unable to create tornado chart due to invalid productivity values.")
-                    else:
-                        st.error("Baseline productivity is zero or None. Please check the model equation and input values.")
-                        st.write("Debug Information:")
-                        st.json(st.session_state.ga_optimizer['df_statistics'])
-                except Exception as e:
-                    st.error(f"An error occurred during sensitivity analysis: {str(e)}")
-                    log_message(logging.ERROR, f"Error in sensitivity analysis: {str(e)}")
-    else:
-        st.warning("No models available. Please run the GA optimization first.")
 
 
 def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, excluded_rows, regression_type, num_models):

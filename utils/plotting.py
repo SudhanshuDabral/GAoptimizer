@@ -1,7 +1,7 @@
 import plotly.graph_objects as go
 import streamlit as st
 import plotly.express as px
-import pandas as pd
+import numpy as np
 
 r2_values = []
 iterations = []
@@ -179,6 +179,56 @@ def create_tornado_chart(sensitivity_df, baseline_productivity):
         barmode='relative',
         height=500,
         width=800
+    )
+    
+    return fig
+
+def create_feature_importance_chart(sensitivity_df):
+    sensitivity_df['Impact_Range'] = sensitivity_df['Max Productivity'] - sensitivity_df['Min Productivity']
+    sensitivity_df = sensitivity_df.sort_values('Impact_Range', ascending=True)
+    
+    fig = go.Figure(go.Bar(
+        y=sensitivity_df['Attribute'],
+        x=sensitivity_df['Impact_Range'],
+        orientation='h'
+    ))
+    
+    fig.update_layout(
+        title='Feature Importance',
+        xaxis_title='Impact Range on Productivity',
+        yaxis_title='Attributes',
+        height=400
+    )
+    
+    return fig
+
+def create_elasticity_analysis(sensitivity_df, zscored_statistics):
+    elasticity = []
+    for _, row in sensitivity_df.iterrows():
+        attr = row['Attribute']
+        median_value = zscored_statistics[attr]['median']
+        max_value = row['Max Productivity']
+        min_value = row['Min Productivity']
+        
+        pct_change_attr = (zscored_statistics[attr]['max'] - zscored_statistics[attr]['min']) / median_value
+        pct_change_prod = (max_value - min_value) / row['Max Productivity']
+        
+        elasticity.append(pct_change_prod / pct_change_attr if pct_change_attr != 0 else 0)
+
+    sensitivity_df['Elasticity'] = elasticity
+    sensitivity_df = sensitivity_df.sort_values('Elasticity', ascending=True)
+
+    fig = go.Figure(go.Bar(
+        y=sensitivity_df['Attribute'],
+        x=sensitivity_df['Elasticity'],
+        orientation='h'
+    ))
+    
+    fig.update_layout(
+        title='Elasticity Analysis',
+        xaxis_title='Elasticity',
+        yaxis_title='Attributes',
+        height=400
     )
     
     return fig
