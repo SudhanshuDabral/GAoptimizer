@@ -1,5 +1,5 @@
 import os
-import pandas as pd
+import uuid
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from streamlit_authenticator.utilities.hasher import Hasher
@@ -9,6 +9,8 @@ import string
 import secrets
 import logging
 from logging.handlers import RotatingFileHandler
+from psycopg2.extras import Json, register_uuid
+
 
 # Set up logging
 log_dir = 'logs'
@@ -343,3 +345,113 @@ def create_user(username, email, name, password, is_admin, access_list):
     except Exception as error:
         log_message(logging.ERROR, f"Error creating user {username}: {str(error)}")
         return False
+
+#supplementary functions for the GA model saving
+def convert_excluded_rows(excluded_rows_string):
+    # Split the string into 36-character chunks (the length of a UUID)
+    uuid_strings = [excluded_rows_string[i:i+36] for i in range(0, len(excluded_rows_string), 36)]
+    
+    # Convert each string to a UUID object
+    uuid_list = [uuid.UUID(uuid_string) for uuid_string in uuid_strings]
+    
+    return uuid_list
+
+
+# Function to insert the GA model into the database
+def insert_ga_model(model_name, user_id, ga_params, ga_results, zscored_df, excluded_rows, sensitivity_df, zscored_statistics, baseline_productivity):
+    log_message(logging.INFO, f"Inserting GA model: {model_name}")
+    try:
+        conn = get_db_connection()
+        register_uuid()
+        cur = conn.cursor()
+        
+        # Convert user_id to UUID if it's not already
+        if not isinstance(user_id, uuid.UUID):
+            user_id = uuid.UUID(str(user_id))
+        
+        # Convert excluded_rows to a list of UUIDs if it's not already
+        if isinstance(excluded_rows, str):
+            excluded_rows_list = convert_excluded_rows(excluded_rows)
+        elif isinstance(excluded_rows, list):
+            excluded_rows_list = [uuid.UUID(str(row)) for row in excluded_rows]
+        else:
+            raise ValueError("excluded_rows must be a string or a list")
+        
+        # Calculate additional metrics for sensitivity data
+        sensitivity_df['Impact_Range'] = sensitivity_df['Max Productivity'] - sensitivity_df['Min Productivity']
+        
+        elasticity = []
+        for _, row in sensitivity_df.iterrows():
+            attr = row['Attribute']
+            max_value = row['Max Productivity']
+            min_value = row['Min Productivity']
+            
+            pct_change_attr = (zscored_statistics[attr]['max'] - zscored_statistics[attr]['min']) / zscored_statistics[attr]['median']
+            pct_change_prod = (max_value - min_value) / baseline_productivity
+            
+            elasticity.append(pct_change_prod / pct_change_attr if pct_change_attr != 0 else 0)
+
+        sensitivity_df['Elasticity'] = elasticity
+        
+        # Calculate relative impact
+        total_impact = sensitivity_df['Impact_Range'].sum()
+        sensitivity_df['Relative_Impact'] = sensitivity_df['Impact_Range'] / total_impact
+        
+        # Prepare the parameters for the function
+        params = [
+            model_name,
+            user_id,
+            float(ga_params['r2_threshold']),
+            float(ga_params['prob_crossover']),
+            float(ga_params['prob_mutation']),
+            int(ga_params['num_generations']),
+            int(ga_params['population_size']),
+            ga_params['regression_type'],
+            ','.join(ga_params['feature_selection']),
+            ga_results['response_equation'],
+            float(ga_results['best_r2_score']),
+            float(ga_results['full_dataset_r2']),
+            ','.join(ga_results['selected_feature_names']),
+            Json(zscored_df.to_dict('records')),
+            excluded_rows_list,
+            Json(sensitivity_df.to_dict('records'))
+        ]
+        
+        # Call the function
+        cur.execute("""
+            SELECT * FROM insert_ga_model(%s, %s, %s, %s, 
+            %s, %s, %s, %s, %s, %s, 
+            %s, %s, %s, %s, %s, %s)
+        """, params)
+        
+        # Fetch the result
+        result = cur.fetchone()
+        
+        if result:
+            status, model_id = result
+            if status == 'SUCCESS':
+                conn.commit()
+                log_message(logging.INFO, f"Successfully inserted GA model: {model_name} with ID: {model_id}")
+                return {'status': 'success', 'model_id': model_id}
+            elif status == 'DUPLICATE':
+                log_message(logging.WARNING, f"Duplicate model name: {model_name}")
+                return {'status': 'duplicate', 'message': 'A model with this name already exists.'}
+            else:
+                conn.rollback()
+                log_message(logging.ERROR, f"Error inserting GA model: {model_name}. Status: {status}")
+                return {'status': 'error', 'message': 'An error occurred while saving the model.'}
+        else:
+            conn.rollback()
+            log_message(logging.ERROR, f"No result returned when inserting GA model: {model_name}")
+            return {'status': 'error', 'message': 'No result returned from the database.'}
+    
+    except Exception as error:
+        conn.rollback()
+        log_message(logging.ERROR, f"Error inserting GA model {model_name}: {str(error)}")
+        return {'status': 'error', 'message': str(error)}
+    
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()

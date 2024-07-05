@@ -3,7 +3,8 @@ import contextlib
 import streamlit as st
 import pandas as pd
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
-from utils.db import get_well_details, get_modeling_data, get_well_stages, get_array_data
+from utils.db import (get_well_details, get_modeling_data,
+                       get_well_stages, get_array_data, insert_ga_model)
 from logging.handlers import RotatingFileHandler
 import logging
 from ga.ga_calculation import run_ga as run_ga_optimization
@@ -54,6 +55,17 @@ def initialize_ga_state():
             'num_generations': 40,
             'population_size': 50,
         }
+def start_ga_optimization_callback():
+    st.session_state.ga_optimizer['running'] = True
+    st.session_state.ga_optimizer['results'] = [] 
+    st.session_state.continuous_optimization = {
+        'r2_values': [],
+        'iterations': [],
+        'model_markers': {},
+        'current_iteration': 0
+    }
+
+
 
 def main(authentication_status):
     if not authentication_status:
@@ -224,18 +236,16 @@ def ga_optimization_section():
                 st.session_state.ga_optimizer['regression_type'] = 'FPR' if regression_type == "Full Polynomial Regression" else 'LWIP'
 
             col1, col2 = st.columns(2)
+
             with col1:
-                if st.button("Start GA Optimization", key="start_button", disabled=st.session_state.ga_optimizer['running']):
+                if st.button("Start GA Optimization", key="start_button", on_click=start_ga_optimization_callback, disabled=st.session_state.ga_optimizer['running']):
                     with st.spinner('Running Genetic Algorithm...'):
-                        st.session_state.ga_optimizer['running'] = True
-                        st.session_state.ga_optimizer['results'] = [] 
-                        st.session_state.continuous_optimization = {
-                                                    'r2_values': [],
-                                                    'iterations': [],
-                                                    'model_markers': {},
-                                                    'current_iteration': 0
-                                                } # Reset results
-                                    
+                        start_ga_optimization(st.session_state.ga_optimizer['zscored_df'], 'Productivity', predictors, st.session_state.ga_optimizer['r2_threshold'],
+                                            coef_range, st.session_state.ga_optimizer['prob_crossover'], st.session_state.ga_optimizer['prob_mutation'], 
+                                            st.session_state.ga_optimizer['num_generations'], st.session_state.ga_optimizer['population_size'],
+                                            st.session_state.ga_optimizer['excluded_rows'],
+                                            st.session_state.ga_optimizer['regression_type'], num_models)
+                                                    
 
             with col2:
                 if st.button("Stop GA Optimization", key="stop_button", disabled=not st.session_state.ga_optimizer['running']):
@@ -321,7 +331,17 @@ def display_ga_results():
                         else:
                             st.error("Baseline productivity is zero or None. Please check the model equation and input values.")
 
-                        show_more_visuals = st.button(f"Show More Model Sensitivity Visuals for Model {i+1}", key=f"more_visuals_{i}")
+
+                        col1, col2, col3 = st.columns([1, 1, 1])
+                        
+                        with col1:
+                            show_more_visuals = st.button(f"Show More Visuals", key=f"more_visuals_{i}")
+                        
+                        with col2:
+                            model_name = st.text_input("Model Name", key=f"model_name_{i}", placeholder="Enter model name")
+                        
+                        with col3:
+                            save_model = st.button("Save Model", key=f"save_model_{i}", disabled=not model_name)
 
                         if show_more_visuals:
                             st.write("Feature Importance Chart")
@@ -331,8 +351,46 @@ def display_ga_results():
 
                             st.write("Elasticity Analysis")
                             st.write("This chart shows how sensitive the productivity is to changes in each feature.")
-                            fig_elasticity = create_elasticity_analysis(sensitivity_df, st.session_state.ga_optimizer['zscored_statistics'])
+                            fig_elasticity = create_elasticity_analysis(sensitivity_df, st.session_state.ga_optimizer['zscored_statistics'], baseline_productivity)
                             st.plotly_chart(fig_elasticity, use_container_width=True)
+
+                        if save_model:
+                            # Prepare data for saving
+                            ga_params = {
+                                'r2_threshold': st.session_state.ga_optimizer['r2_threshold'],
+                                'prob_crossover': st.session_state.ga_optimizer['prob_crossover'],
+                                'prob_mutation': st.session_state.ga_optimizer['prob_mutation'],
+                                'num_generations': st.session_state.ga_optimizer['num_generations'],
+                                'population_size': st.session_state.ga_optimizer['population_size'],
+                                'regression_type': st.session_state.ga_optimizer['regression_type'],
+                                'feature_selection': selected_feature_names
+                            }
+                            ga_results = {
+                                'response_equation': response_equation,
+                                'best_r2_score': weighted_r2_score,
+                                'full_dataset_r2': full_dataset_r2,
+                                'selected_feature_names': selected_feature_names
+                            }
+                            
+                            # Call the database function to save the model
+                            result = insert_ga_model(
+                                model_name,
+                                st.session_state.user_id,
+                                ga_params,
+                                ga_results,
+                                zscored_df,
+                                excluded_rows,
+                                sensitivity_df,
+                                st.session_state.ga_optimizer['zscored_statistics'],
+                                baseline_productivity
+                                )
+                            
+                            if result['status'] == 'success':
+                                st.success(f"Model '{model_name}' saved successfully.")
+                            elif result['status'] == 'duplicate':
+                                st.warning(result['message'])
+                            else:
+                                st.error(result['message'])
 
                     except Exception as e:
                         st.error(f"An error occurred during sensitivity analysis: {str(e)}")

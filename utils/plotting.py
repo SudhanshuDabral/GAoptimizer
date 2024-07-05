@@ -202,7 +202,7 @@ def create_feature_importance_chart(sensitivity_df):
     
     return fig
 
-def create_elasticity_analysis(sensitivity_df, zscored_statistics):
+def create_elasticity_analysis(sensitivity_df, zscored_statistics, baseline_productivity):
     elasticity = []
     for _, row in sensitivity_df.iterrows():
         attr = row['Attribute']
@@ -211,7 +211,7 @@ def create_elasticity_analysis(sensitivity_df, zscored_statistics):
         min_value = row['Min Productivity']
         
         pct_change_attr = (zscored_statistics[attr]['max'] - zscored_statistics[attr]['min']) / median_value
-        pct_change_prod = (max_value - min_value) / row['Max Productivity']
+        pct_change_prod = (max_value - min_value) / baseline_productivity
         
         elasticity.append(pct_change_prod / pct_change_attr if pct_change_attr != 0 else 0)
 
