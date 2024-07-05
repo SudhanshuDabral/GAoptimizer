@@ -55,6 +55,7 @@ def initialize_ga_state():
             'num_generations': 40,
             'population_size': 50,
         }
+
 def start_ga_optimization_callback():
     st.session_state.ga_optimizer['running'] = True
     st.session_state.ga_optimizer['results'] = [] 
@@ -64,6 +65,7 @@ def start_ga_optimization_callback():
         'model_markers': {},
         'current_iteration': 0
     }
+    
 
 
 
@@ -234,23 +236,20 @@ def ga_optimization_section():
                                                index=0,
                                                help="Select the type of regression model to use in the optimization process.")
                 st.session_state.ga_optimizer['regression_type'] = 'FPR' if regression_type == "Full Polynomial Regression" else 'LWIP'
+                
 
-            col1, col2 = st.columns(2)
-
-            with col1:
-                if st.button("Start GA Optimization", key="start_button", on_click=start_ga_optimization_callback, disabled=st.session_state.ga_optimizer['running']):
+            if st.session_state.ga_optimizer['running']:
+                if st.button("Stop GA Optimization", key="toggle_button"):
+                    st.session_state.ga_optimizer['running'] = False
+                    st.rerun()
+            else:
+                if st.button("Start GA Optimization", key="toggle_button", on_click=start_ga_optimization_callback):
                     with st.spinner('Running Genetic Algorithm...'):
                         start_ga_optimization(st.session_state.ga_optimizer['zscored_df'], 'Productivity', predictors, st.session_state.ga_optimizer['r2_threshold'],
                                             coef_range, st.session_state.ga_optimizer['prob_crossover'], st.session_state.ga_optimizer['prob_mutation'], 
                                             st.session_state.ga_optimizer['num_generations'], st.session_state.ga_optimizer['population_size'],
                                             st.session_state.ga_optimizer['excluded_rows'],
                                             st.session_state.ga_optimizer['regression_type'], num_models)
-                                                    
-
-            with col2:
-                if st.button("Stop GA Optimization", key="stop_button", disabled=not st.session_state.ga_optimizer['running']):
-                    st.session_state.ga_optimizer['running'] = False
-                    st.rerun()
 
             if st.session_state.ga_optimizer['running']:
                 start_ga_optimization(st.session_state.ga_optimizer['zscored_df'], 'Productivity', predictors, st.session_state.ga_optimizer['r2_threshold'],
