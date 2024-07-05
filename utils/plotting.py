@@ -232,3 +232,24 @@ def create_elasticity_analysis(sensitivity_df, zscored_statistics, baseline_prod
     )
     
     return fig
+
+
+def plot_sensitivity_results(sensitivity_results, attribute_name):
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=sensitivity_results['TestPoint'],
+        y=sensitivity_results['Productivity'],
+        mode='lines+markers',
+        name='Productivity'
+    ))
+
+    fig.update_layout(
+        title=f'Sensitivity Analysis for {attribute_name}',
+        xaxis_title=f'{attribute_name} (Z-score)',
+        yaxis_title='Productivity',
+        height=500,
+        width=800
+    )
+
+    return fig

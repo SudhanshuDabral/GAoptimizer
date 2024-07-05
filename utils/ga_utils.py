@@ -115,6 +115,31 @@ def calculate_model_sensitivity(response_equation, df_statistics):
     
     return baseline_productivity, sensitivity_df
 
+# function for sensitivity test 
+def perform_sensitivity_test(response_equation, attribute, num_points, zscored_statistics):
+    # Get the min and max values for the attribute from zscored statistics
+    min_value = zscored_statistics[attribute]['min']
+    max_value = zscored_statistics[attribute]['max']
+    
+    # Generate equally spaced test points
+    test_points = np.linspace(min_value, max_value, num_points)
+    
+    # Get median values for all attributes from zscored statistics
+    median_values = {attr: zscored_statistics[attr]['median'] for attr in zscored_statistics}
+    
+    # Calculate productivity for each test point
+    results = []
+    for point in test_points:
+        test_values = median_values.copy()
+        test_values[attribute] = point
+        productivity = calculate_productivity(test_values, response_equation)
+        
+        results.append({
+            'TestPoint': point,
+            'Productivity': productivity
+        })
+    
+    return pd.DataFrame(results)
 
 # function to check monotonicity of the data for modelling used in ga_main.py
 def batch_monotonicity_check(stages, well_id, get_array_data_func, df_statistics, equation):
