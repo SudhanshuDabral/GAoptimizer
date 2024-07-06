@@ -18,6 +18,7 @@ from utils.reporting import generate_pdf_report
 import time
 import os
 import numpy as np
+from streamlit_option_menu import option_menu
 
 # Set up logging
 log_dir = 'logs'
@@ -53,7 +54,6 @@ def initialize_ga_state():
             'zscored_statistics': None,
             'show_monotonicity': False,
             'show_sensitivity_test': False,
-            'show_custom_sensitivity': False,
             'r2_threshold': 0.55,
             'prob_crossover': 0.8,
             'prob_mutation': 0.2,
@@ -70,10 +70,9 @@ def start_ga_optimization_callback():
         'model_markers': {},
         'current_iteration': 0
     }
-    
 
 
-
+# GA optimization main function
 def main(authentication_status):
     if not authentication_status:
         st.warning("Please login to access this page.")
@@ -84,28 +83,20 @@ def main(authentication_status):
 
     st.sidebar.title("GA Optimizer Menu")
     if st.sidebar.button("Monotonicity Check", key="fab_monotonicity"):
-        st.session_state.ga_optimizer['show_monotonicity'] = not st.session_state.ga_optimizer['show_monotonicity']
+        st.session_state.ga_optimizer['show_monotonicity'] = not st.session_state.ga_optimizer.get('show_monotonicity', False)
     
     if st.sidebar.button("Sensitivity Test", key="fab_sensitivity_test"):
         st.session_state.ga_optimizer['show_sensitivity_test'] = not st.session_state.ga_optimizer.get('show_sensitivity_test', False)
     
-    # Add this new button for Custom Sensitivity Analysis
-    if st.sidebar.button("Custom Sensitivity Analysis", key="fab_custom_sensitivity"):
-        st.session_state.ga_optimizer['show_custom_sensitivity'] = not st.session_state.ga_optimizer.get('show_custom_sensitivity', False)
-
     st.title("Hydraulic Fracturing Productivity Model Optimizer (HF-PMO)")
 
     ga_optimization_section()
 
-    if st.session_state.ga_optimizer['show_monotonicity']:
+    if st.session_state.ga_optimizer.get('show_monotonicity', False):
         monotonicity_check_modal()
     
     if st.session_state.ga_optimizer.get('show_sensitivity_test', False):
         sensitivity_test_section()
-    
-    # Add this condition to show the Custom Sensitivity Analysis section
-    if st.session_state.ga_optimizer.get('show_custom_sensitivity', False):
-        custom_sensitivity_analysis_section()
 
 
 @contextlib.contextmanager
@@ -470,7 +461,8 @@ def monotonicity_check_modal():
 
 
     if 'results' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['results']:
-        model_options = [f"Model {i+1} (R²: {result[1]:.4f})" for i, result in enumerate(st.session_state.ga_optimizer['results'])]
+        model_options = [f"Model {i+1} (Weighted R²: {result[1]:.4f}, Full Dataset R²: {result[8]:.4f})" 
+                     for i, result in enumerate(st.session_state.ga_optimizer['results'])]
         model_options.append("Custom Equation")
         selected_model = st.selectbox("Select Model for Monotonicity Check", options=model_options)
     else:
@@ -480,7 +472,7 @@ def monotonicity_check_modal():
     if selected_model == "Custom Equation":
         custom_equation = st.text_area(
             "Enter custom equation", 
-            placeholder="Corrected_Prod = ... (use only tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, total_slurry_dp, median_slurry)",
+            placeholder="Corrected_Prod = ... (use only tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, total_slurry_dp, median_slurry)", key='monotonicity_custom_eqn' ,
             height=100
         )
         
@@ -564,190 +556,172 @@ def display_monotonicity_results(selected_stages):
 
 # Sensitivity Test
 def sensitivity_test_section():
-    st.markdown("""
-    <style>
-    .section-partition {
-        margin-top: 2rem;
-        margin-bottom: 2rem;
-        border: 0;
-        border-top: 2px solid #e5e5e5;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    st.markdown('<hr class="section-partition">', unsafe_allow_html=True)
     st.markdown("## Sensitivity Test")
 
-    if not st.session_state.ga_optimizer['results']:
-        st.warning("No GA models available. Please run GA optimization first.")
-        return
+    # Initialize session state for storing results
+    if 'sensitivity_results' not in st.session_state:
+        st.session_state.sensitivity_results = {
+            'general': None,
+            'attribute_specific': None,
+            'current_model': None
+        }
 
-    if 'zscored_df' not in st.session_state.ga_optimizer or st.session_state.ga_optimizer['zscored_df'] is None:
-        st.error("Z-scored data is not available. Please ensure you've processed the data before running the sensitivity test.")
-        return
+    # Model selection with both R² values
+    model_options = [f"Model {i+1} (Weighted R²: {result[1]:.4f}, Full Dataset R²: {result[8]:.4f})" 
+                     for i, result in enumerate(st.session_state.ga_optimizer['results'])]
+    model_options.append("Custom Equation")
+    selected_model = st.selectbox("Select Model or Custom Equation", options=model_options)
 
-    # Model selection
-    model_options = [f"Model {i+1} (R²: {result[1]:.4f})" for i, result in enumerate(st.session_state.ga_optimizer['results'])]
-    selected_model = st.selectbox("Select Model for Sensitivity Test", options=model_options)
-    model_index = int(selected_model.split()[1]) - 1
-    
-    # Extract model details
-    best_ind, weighted_r2_score, response_equation, selected_feature_names, errors_df, predicted_values, zscored_df, excluded_rows, full_dataset_r2 = st.session_state.ga_optimizer['results'][model_index]
+    # Reset results if model changes
+    if selected_model != st.session_state.sensitivity_results.get('current_model'):
+        st.session_state.sensitivity_results = {
+            'general': None,
+            'attribute_specific': None,
+            'current_model': selected_model
+        }
 
-    # Display selected model details
-    st.write(f"Selected Model: {selected_model}")
-    st.write(f"Weighted R² Score: {weighted_r2_score:.4f}")
-    st.write(f"Full Dataset R² Score: {full_dataset_r2:.4f}")
-    st.code(response_equation, language='text')
-
-    # Get the list of predictors (features used in the model)
-    all_columns = st.session_state.ga_optimizer['zscored_df'].columns
-    predictors = [col for col in all_columns if col not in ['Productivity', 'stage', 'Well Name', 'data_id', 'well_id']]
-
-    # Attribute selection
-    selected_attribute = st.selectbox("Select Attribute for Sensitivity Test", options=predictors)
-
-    # Number of test points
-    num_points = st.slider("Number of Test Points", min_value=5, max_value=50, value=20)
-
-    if st.button("Run Sensitivity Test"):
-        with st.spinner("Running Sensitivity Test..."):
-            try:
-                sensitivity_results = perform_sensitivity_test(
-                    response_equation, 
-                    selected_attribute, 
-                    num_points, 
-                    st.session_state.ga_optimizer['zscored_statistics']
-                )
-
-                st.subheader("Sensitivity Test Results")
-                st.dataframe(sensitivity_results)
-
-                fig = plot_sensitivity_results(sensitivity_results, selected_attribute)
-                st.plotly_chart(fig, use_container_width=True)
-
-                # Additional analysis
-                min_productivity = sensitivity_results['Productivity'].min()
-                max_productivity = sensitivity_results['Productivity'].max()
-                range_productivity = max_productivity - min_productivity
-
-                st.write(f"Minimum Productivity: {min_productivity:.4f}")
-                st.write(f"Maximum Productivity: {max_productivity:.4f}")
-                st.write(f"Range of Productivity: {range_productivity:.4f}")
-
-                st.success("Sensitivity Test completed successfully!")
-            except Exception as e:
-                st.error(f"An error occurred during the sensitivity test: {str(e)}")
-                log_message(logging.ERROR, f"Error in sensitivity test: {str(e)}")
-
-
-# Custom Sensitivity Analysis
-def custom_sensitivity_analysis_section():
-    st.markdown("""
-    <style>
-    .section-partition {
-        margin-top: 2rem;
-        margin-bottom: 2rem;
-        border: 0;
-        border-top: 2px solid #e5e5e5;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    st.markdown('<hr class="section-partition">', unsafe_allow_html=True)
-    st.markdown("## Custom Sensitivity Analysis")
-
-    # Initialize session state for storing analysis results
-    if 'custom_sensitivity_results' not in st.session_state:
-        st.session_state.custom_sensitivity_results = None
-
-    custom_equation = st.text_area(
-        "Enter custom equation", 
-        placeholder="Corrected_Prod = ... (use only tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, total_slurry_dp, median_slurry)",
-        height=100
-    )
-    
-    if custom_equation:
+    if selected_model == "Custom Equation":
+        custom_equation = st.text_area(
+            "Enter custom equation", 
+            placeholder="Corrected_Prod = ... (use only tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, total_slurry_dp, median_slurry)", key='sensitivity_custom_eqn',
+            height=100
+        )
         is_valid, validation_message = validate_custom_equation(custom_equation)
-        if is_valid:
-            st.success("Custom equation is valid.")
-            st.write("Equation being used for sensitivity analysis:")
-            st.code(custom_equation)
-
-            if st.button("Run Sensitivity Analysis"):
-                with st.spinner("Running Sensitivity Analysis..."):
-                    try:
-                        baseline_productivity, sensitivity_df = calculate_model_sensitivity(
-                            custom_equation, 
-                            st.session_state.ga_optimizer['zscored_statistics']
-                        )
-                        
-                        if baseline_productivity is not None and not np.isclose(baseline_productivity, 0, atol=1e-10):
-                            st.write(f"Baseline Productivity (using median values): {baseline_productivity:.4f}")
-                            
-                            st.write("Sensitivity Analysis Results:")
-                            st.dataframe(sensitivity_df, use_container_width=True, hide_index=True)
-                            
-                            if not sensitivity_df['Min Productivity'].isna().all() and not sensitivity_df['Max Productivity'].isna().all():
-                                st.write("Tornado Chart")
-                                fig_tornado = create_tornado_chart(sensitivity_df, baseline_productivity)
-                                st.plotly_chart(fig_tornado, use_container_width=True)
-                                
-                                st.write("Feature Importance Chart")
-                                fig_importance = create_feature_importance_chart(sensitivity_df)
-                                st.plotly_chart(fig_importance, use_container_width=True)
-                                
-                                st.write("Elasticity Analysis")
-                                fig_elasticity = create_elasticity_analysis(sensitivity_df, st.session_state.ga_optimizer['zscored_statistics'], baseline_productivity)
-                                st.plotly_chart(fig_elasticity, use_container_width=True)
-
-                                # Store results in session state
-                                st.session_state.custom_sensitivity_results = {
-                                    'custom_equation': custom_equation,
-                                    'baseline_productivity': baseline_productivity,
-                                    'sensitivity_df': sensitivity_df,
-                                    'fig_tornado': fig_tornado,
-                                    'fig_importance': fig_importance,
-                                    'fig_elasticity': fig_elasticity
-                                }
-                            else:
-                                st.warning("Unable to create charts due to invalid productivity values.")
-                        else:
-                            st.error("Baseline productivity is zero or None. Please check the equation and input values.")
-                    except Exception as e:
-                        st.error(f"An error occurred during sensitivity analysis: {str(e)}")
-                        log_message(logging.ERROR, f"Error in custom sensitivity analysis: {str(e)}")
-
-            # Only show export button if we have results
-            if st.session_state.custom_sensitivity_results is not None:
-                if st.button("Export Report"):
-                    try:
-                        pdf_buffer = generate_pdf_report(
-                            st.session_state.custom_sensitivity_results['custom_equation'],
-                            st.session_state.custom_sensitivity_results['baseline_productivity'],
-                            st.session_state.custom_sensitivity_results['sensitivity_df'],
-                            st.session_state.custom_sensitivity_results['fig_tornado'],
-                            st.session_state.custom_sensitivity_results['fig_importance'],
-                            st.session_state.custom_sensitivity_results['fig_elasticity']
-                        )
-                        st.download_button(
-                            label="Download PDF Report",
-                            data=pdf_buffer,
-                            file_name="sensitivity_analysis_report.pdf",
-                            mime="application/pdf"
-                        )
-                        st.success("PDF report generated successfully. Click the download button to save it.")
-                    except Exception as e:
-                        st.error(f"An error occurred while generating the PDF report: {str(e)}")
-                        log_message(logging.ERROR, f"Error in PDF report generation: {str(e)}")
-        else:
+        if not is_valid:
             st.error(f"Invalid custom equation: {validation_message}")
+            return
+        equation_to_use = custom_equation
     else:
-        st.warning("Please enter a custom equation.")
+        model_index = int(selected_model.split()[1]) - 1
+        _, _, equation_to_use, _, _, _, _, _, _ = st.session_state.ga_optimizer['results'][model_index]
 
-def log_message(level, message):
-    logger = logging.getLogger(__name__)
-    logger.log(level, f"[Custom Sensitivity Analysis] {message}")
+    st.write("Equation being used for sensitivity analysis:")
+    st.code(equation_to_use, language='text')
+
+    # Create tabs
+    tab1, tab2 = st.tabs(["General Sensitivity Analysis", "Attribute-Specific Sensitivity Test"])
+
+    with tab1:
+        st.subheader("General Sensitivity Analysis")
+        if st.button("Run General Sensitivity Analysis"):
+            with st.spinner("Running General Sensitivity Analysis..."):
+                try:
+                    baseline_productivity, sensitivity_df = calculate_model_sensitivity(
+                        equation_to_use, 
+                        st.session_state.ga_optimizer['zscored_statistics']
+                    )
+                    
+                    if baseline_productivity is not None and not np.isclose(baseline_productivity, 0, atol=1e-10):
+                        fig_tornado = create_tornado_chart(sensitivity_df, baseline_productivity)
+                        fig_importance = create_feature_importance_chart(sensitivity_df)
+                        fig_elasticity = create_elasticity_analysis(sensitivity_df, st.session_state.ga_optimizer['zscored_statistics'], baseline_productivity)
+                        
+                        st.session_state.sensitivity_results['general'] = {
+                            'baseline_productivity': baseline_productivity,
+                            'sensitivity_df': sensitivity_df,
+                            'fig_tornado': fig_tornado,
+                            'fig_importance': fig_importance,
+                            'fig_elasticity': fig_elasticity
+                        }
+                        st.success("General Sensitivity Analysis completed successfully!")
+                    else:
+                        st.error("Baseline productivity is zero or None. Please check the equation and input values.")
+                except Exception as e:
+                    st.error(f"An error occurred during general sensitivity analysis: {str(e)}")
+                    log_message(logging.ERROR, f"Error in general sensitivity analysis: {str(e)}")
+        
+        if st.session_state.sensitivity_results['general']:
+            results = st.session_state.sensitivity_results['general']
+            st.write(f"Baseline Productivity: {results['baseline_productivity']:.4f}")
+            st.dataframe(results['sensitivity_df'], use_container_width=True, hide_index=True)
+            st.plotly_chart(results['fig_tornado'], use_container_width=True)
+            st.plotly_chart(results['fig_importance'], use_container_width=True)
+            st.plotly_chart(results['fig_elasticity'], use_container_width=True)
+
+    with tab2:
+        st.subheader("Attribute-Specific Sensitivity Test")
+        if st.session_state.sensitivity_results['general']:
+            predictors = st.session_state.sensitivity_results['general']['sensitivity_df']['Attribute'].tolist()
+            selected_attributes = st.multiselect("Select Attributes for Detailed Sensitivity Test", options=predictors)
+            num_points = st.slider("Number of Test Points", min_value=5, max_value=50, value=20)
+
+            if st.button("Run Attribute-Specific Sensitivity Test"):
+                with st.spinner("Running Attribute-Specific Sensitivity Test..."):
+                    try:
+                        attribute_results = {}
+                        for attr in selected_attributes:
+                            sensitivity_results = perform_sensitivity_test(
+                                equation_to_use,
+                                attr, 
+                                num_points, 
+                                st.session_state.ga_optimizer['zscored_statistics']
+                            )
+                            fig_sensitivity = plot_sensitivity_results(sensitivity_results, attr)
+                            
+                            # Calculate range of productivity and min/max for the attribute
+                            prod_min = sensitivity_results['Productivity'].min()
+                            prod_max = sensitivity_results['Productivity'].max()
+                            prod_range = prod_max - prod_min
+                            attr_min = sensitivity_results['TestPoint'].min()
+                            attr_max = sensitivity_results['TestPoint'].max()
+                            
+                            attribute_results[attr] = {
+                                'results': sensitivity_results,
+                                'fig': fig_sensitivity,
+                                'prod_range': prod_range,
+                                'prod_min': prod_min,
+                                'prod_max': prod_max,
+                                'attr_min': attr_min,
+                                'attr_max': attr_max
+                            }
+                        
+                        st.session_state.sensitivity_results['attribute_specific'] = attribute_results
+                        st.success("Attribute-Specific Sensitivity Test completed successfully!")
+                    except Exception as e:
+                        st.error(f"An error occurred during attribute-specific sensitivity test: {str(e)}")
+                        log_message(logging.ERROR, f"Error in attribute-specific sensitivity test: {str(e)}")
+            
+            if st.session_state.sensitivity_results['attribute_specific']:
+                results = st.session_state.sensitivity_results['attribute_specific']
+                for attr, data in results.items():
+                    with st.expander(f"Sensitivity Analysis for {attr}", expanded=True):
+                        if all(key in data for key in ['attr_min', 'attr_max', 'prod_min', 'prod_max', 'prod_range']):
+                            st.write(f"**Attribute Range:** {data['attr_min']:.4f} to {data['attr_max']:.4f}")
+                            st.write(f"**Productivity Range:** {data['prod_min']:.4f} to {data['prod_max']:.4f}")
+                            st.write(f"**Productivity Spread:** {data['prod_range']:.4f}")
+                        else:
+                            st.warning(f"Complete data not available for {attr}. Please rerun the analysis.")
+                        
+                        st.plotly_chart(data['fig'], use_container_width=True)
+                        
+                        if len(selected_attributes) == 1:
+                            st.dataframe(data['results'], use_container_width=True, hide_index=True)
+        else:
+            st.warning("Please run the General Sensitivity Analysis first.")
+
+    # Export button (outside of tabs)
+    if st.session_state.sensitivity_results['general'] and st.session_state.sensitivity_results['attribute_specific']:
+        if st.button("Export Report"):
+            try:
+                pdf_buffer = generate_pdf_report(
+                    equation_to_use,
+                    st.session_state.sensitivity_results['general']['baseline_productivity'],
+                    st.session_state.sensitivity_results['general']['sensitivity_df'],
+                    st.session_state.sensitivity_results['general']['fig_tornado'],
+                    st.session_state.sensitivity_results['general']['fig_importance'],
+                    st.session_state.sensitivity_results['general']['fig_elasticity'],
+                    st.session_state.sensitivity_results['attribute_specific']
+                )
+                st.download_button(
+                    label="Download PDF Report",
+                    data=pdf_buffer,
+                    file_name="sensitivity_analysis_report.pdf",
+                    mime="application/pdf"
+                )
+                st.success("PDF report generated successfully. Click the download button to save it.")
+            except Exception as e:
+                st.error(f"An error occurred while generating the PDF report: {str(e)}")
+                log_message(logging.ERROR, f"Error in PDF report generation: {str(e)}")
 
 # Genetic Algorithm Optimization
 def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, excluded_rows, regression_type, num_models):
