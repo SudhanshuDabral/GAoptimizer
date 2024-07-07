@@ -706,7 +706,7 @@ def sensitivity_test_section():
                 st.subheader("Consolidated Attribute Influence")
                 influence_data = [
                     {"Attribute": attr, "Productivity Range": data['prod_range'], "Influence": data['prod_range']}
-                    for attr, data in results.items()
+                    for attr, data in results.items() if attr not in ['influence_df', 'fig_influence']
                 ]
                 influence_df = pd.DataFrame(influence_data)
                 influence_df = influence_df.sort_values('Influence', ascending=False)
@@ -715,40 +715,48 @@ def sensitivity_test_section():
                 fig_influence = create_influence_chart(influence_df)
                 st.plotly_chart(fig_influence, use_container_width=True)
                 
+                # Store the influence data and chart in the session state
+                st.session_state.sensitivity_results['attribute_specific']['influence_df'] = influence_df
+                st.session_state.sensitivity_results['attribute_specific']['fig_influence'] = fig_influence
+                
                 # Display detailed table
                 st.write("Detailed Attribute Influence:")
                 st.table(influence_df.style.format({'Productivity Range': '{:.4f}', 'Influence': '{:.4f}'}))
                 
                 # Individual attribute details
                 for attr, data in results.items():
-                    with st.expander(f"Sensitivity Analysis for {attr}", expanded=False):
-                        if all(key in data for key in ['attr_min', 'attr_max', 'prod_min', 'prod_max', 'prod_range']):
-                            st.write(f"**Attribute Range:** {data['attr_min']:.4f} to {data['attr_max']:.4f}")
-                            st.write(f"**Productivity Range:** {data['prod_min']:.4f} to {data['prod_max']:.4f}")
-                            st.write(f"**Productivity Spread:** {data['prod_range']:.4f}")
-                        else:
-                            st.warning(f"Complete data not available for {attr}. Please rerun the analysis.")
-                        
-                        st.plotly_chart(data['fig'], use_container_width=True)
-                        
-                        if len(selected_attributes) == 1:
-                            st.dataframe(data['results'], use_container_width=True, hide_index=True)
+                    if attr not in ['influence_df', 'fig_influence']:
+                        with st.expander(f"Sensitivity Analysis for {attr}", expanded=False):
+                            if all(key in data for key in ['attr_min', 'attr_max', 'prod_min', 'prod_max', 'prod_range']):
+                                st.write(f"**Attribute Range:** {data['attr_min']:.4f} to {data['attr_max']:.4f}")
+                                st.write(f"**Productivity Range:** {data['prod_min']:.4f} to {data['prod_max']:.4f}")
+                                st.write(f"**Productivity Spread:** {data['prod_range']:.4f}")
+                            else:
+                                st.warning(f"Complete data not available for {attr}. Please rerun the analysis.")
+                            
+                            if 'fig' in data:
+                                st.plotly_chart(data['fig'], use_container_width=True)
+                            else:
+                                st.warning(f"No plot available for {attr}. Please rerun the analysis.")
+                            
+                            if 'results' in data and len(selected_attributes) == 1:
+                                st.dataframe(data['results'], use_container_width=True, hide_index=True)
         else:
             st.warning("Please run the General Sensitivity Analysis first.")
 
-    # Export button (outside of tabs)
-    if st.session_state.sensitivity_results['general'] and st.session_state.sensitivity_results['attribute_specific']:
-        if st.button("Export Report"):
-            try:
+    if st.button("Export Report"):
+        try:
+            with st.spinner("Generating PDF report... This may take a few moments."):
                 pdf_buffer = generate_pdf_report(
                     equation_to_use,
                     st.session_state.sensitivity_results['general']['baseline_productivity'],
                     st.session_state.sensitivity_results['general']['sensitivity_df'],
-                    st.session_state.sensitivity_results['general']['fig_tornado'],
-                    st.session_state.sensitivity_results['general']['fig_importance'],
-                    st.session_state.sensitivity_results['general']['fig_elasticity'],
-                    st.session_state.sensitivity_results['attribute_specific']
+                    st.session_state.sensitivity_results['general'],
+                    st.session_state.sensitivity_results['attribute_specific'],
+                    st.session_state.user_id
                 )
+            
+            if pdf_buffer:
                 st.download_button(
                     label="Download PDF Report",
                     data=pdf_buffer,
@@ -756,9 +764,13 @@ def sensitivity_test_section():
                     mime="application/pdf"
                 )
                 st.success("PDF report generated successfully. Click the download button to save it.")
-            except Exception as e:
-                st.error(f"An error occurred while generating the PDF report: {str(e)}")
-                log_message(logging.ERROR, f"Error in PDF report generation: {str(e)}")
+            else:
+                st.error("Failed to generate the PDF report. Please check the logs for more information.")
+        except Exception as e:
+            st.error(f"An error occurred while generating the PDF report: {str(e)}")
+            log_message(logging.ERROR, f"Error in PDF report generation: {str(e)}", exc_info=True)
+
+
 # Genetic Algorithm Optimization
 def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, excluded_rows, regression_type, num_models):
     full_zscored_df = df.copy()

@@ -1,0 +1,218 @@
+import os
+import logging
+from logging.handlers import RotatingFileHandler
+from io import BytesIO
+import time
+import plotly.io as pio
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter, landscape
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, PageBreak, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+import pandas as pd
+import shutil
+
+# Logger setup
+log_dir = 'logs'
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+
+log_file = os.path.join(log_dir, 'app_logs.log')
+
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=logging.INFO,
+                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                        handlers=[
+                            RotatingFileHandler(log_file, maxBytes=10485760, backupCount=5),
+                        ])
+
+logger = logging.getLogger(__name__)
+
+def log_message(level, message, exc_info=False):
+    logger.log(level, f"[Reporting] {message}", exc_info=exc_info)
+
+# Configure Kaleido settings
+pio.kaleido.scope.default_width = 1600
+pio.kaleido.scope.default_height = 900
+pio.kaleido.scope.default_scale = 2
+
+def save_plot_as_image(fig, plot_name, user_id):
+    """
+    Convert a plotly figure to a high-resolution image and save it to a file.
+    
+    :param fig: plotly Figure object
+    :param plot_name: str, name of the plot
+    :param user_id: str, user identifier
+    :return: str, path to the saved image
+    """
+    base_dir = 'reporting'
+    user_dir = os.path.join(base_dir, user_id)
+    os.makedirs(user_dir, exist_ok=True)
+    
+    filename = f"{plot_name}_{user_id}.png"
+    file_path = os.path.join(user_dir, filename)
+    
+    # Adjust layout to ensure all labels are visible
+    fig.update_layout(
+        margin=dict(l=150, r=50, t=50, b=50),
+        autosize=False,
+        width=1600,
+        height=900
+    )
+    
+    # Use the format parameter and specify the engine
+    pio.write_image(fig, file_path, format='png', engine="kaleido")
+    
+    return file_path
+
+def cleanup_images(user_id):
+    """
+    Delete the temporary image files created for a specific user.
+    
+    :param user_id: str, user identifier
+    """
+    base_dir = 'reporting'
+    user_dir = os.path.join(base_dir, user_id)
+    if os.path.exists(user_dir):
+        shutil.rmtree(user_dir)
+        log_message(logging.INFO, f"Cleaned up temporary images for user {user_id}")
+
+def generate_pdf_report(custom_equation, baseline_productivity, sensitivity_df, 
+                        general_results, attribute_specific_results, user_id):
+    overall_start_time = time.time()
+    log_message(logging.INFO, "Starting PDF report generation")
+    buffer = BytesIO()
+    try:
+        doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=18)
+        
+        styles = getSampleStyleSheet()
+        styles.add(ParagraphStyle(name='Justify', alignment=1))
+        
+        elements = []
+        
+        # Title
+        elements.append(Paragraph("Sensitivity Analysis Report", styles['Title']))
+        elements.append(Spacer(1, 12))
+        
+        # Custom Equation
+        elements.append(Paragraph("Custom Equation:", styles['Heading2']))
+        elements.append(Paragraph(custom_equation, styles['Normal']))
+        elements.append(Spacer(1, 12))
+        
+        # Baseline Productivity
+        elements.append(Paragraph(f"Baseline Productivity: {baseline_productivity:.4f}", styles['Normal']))
+        elements.append(Spacer(1, 12))
+        
+        # General Sensitivity Analysis Results
+        elements.append(Paragraph("General Sensitivity Analysis Results:", styles['Heading2']))
+        
+        # General Sensitivity Analysis Plots
+        plot_info = {
+            "Tornado Chart": "The Tornado Chart displays the sensitivity of the model to each input variable. Longer bars indicate higher sensitivity.",
+            "Feature Importance Chart": "The Feature Importance Chart shows the relative importance of each feature in the model. Taller bars represent more important features.",
+            "Elasticity Analysis": "The Elasticity Analysis chart shows how responsive the model output is to changes in each input variable. Steeper lines indicate higher elasticity."
+        }
+        
+        for title, fig in [("Tornado Chart", general_results['fig_tornado']), 
+                           ("Feature Importance Chart", general_results['fig_importance']), 
+                           ("Elasticity Analysis", general_results['fig_elasticity'])]:
+            plot_start_time = time.time()
+            log_message(logging.INFO, f"Starting to add {title} to PDF")
+            
+            elements.append(Paragraph(title, styles['Heading3']))
+            elements.append(Paragraph(plot_info[title], styles['Normal']))
+            
+            try:
+                img_path = save_plot_as_image(fig, title.lower().replace(" ", "_"), user_id)
+                img = Image(img_path, width=10*inch, height=5.6*inch)
+                elements.append(img)
+            except Exception as e:
+                log_message(logging.ERROR, f"Error adding {title} to PDF: {str(e)}", exc_info=True)
+                elements.append(Paragraph(f"Error including {title}: {str(e)}", styles['Normal']))
+            
+            elements.append(Spacer(1, 12))
+            elements.append(PageBreak())
+            
+            log_message(logging.INFO, f"Finished adding {title} to PDF in {time.time() - plot_start_time:.2f} seconds")
+        
+        # Attribute-Specific Sensitivity Results
+        elements.append(Paragraph("Attribute-Specific Sensitivity Results:", styles['Heading2']))
+        for attr, data in attribute_specific_results.items():
+            if attr not in ['influence_df', 'fig_influence']:
+                elements.append(Paragraph(f"Sensitivity Analysis for {attr}", styles['Heading3']))
+                elements.append(Paragraph(f"Attribute Range: {data['attr_min']:.4f} to {data['attr_max']:.4f}", styles['Normal']))
+                elements.append(Paragraph(f"Productivity Range: {data['prod_min']:.4f} to {data['prod_max']:.4f}", styles['Normal']))
+                elements.append(Paragraph(f"Productivity Spread: {data['prod_range']:.4f}", styles['Normal']))
+                
+                try:
+                    img_path = save_plot_as_image(data['fig'], f"sensitivity_{attr}", user_id)
+                    img = Image(img_path, width=10*inch, height=5.6*inch)
+                    elements.append(img)
+                except Exception as e:
+                    log_message(logging.ERROR, f"Error adding attribute-specific plot for {attr} to PDF: {str(e)}", exc_info=True)
+                    elements.append(Paragraph(f"Error including plot for {attr}: {str(e)}", styles['Normal']))
+                
+                elements.append(Spacer(1, 12))
+                elements.append(PageBreak())
+        
+        # Consolidated Attribute Influence
+        if 'fig_influence' in attribute_specific_results:
+            elements.append(Paragraph("Consolidated Attribute Influence", styles['Heading2']))
+            elements.append(Paragraph("This plot represents the overall influence of each attribute on the model's output. Attributes with larger bars have a more significant impact on the productivity predictions.", styles['Normal']))
+            try:
+                img_path = save_plot_as_image(attribute_specific_results['fig_influence'], "influence_chart", user_id)
+                img = Image(img_path, width=10*inch, height=5.6*inch)
+                elements.append(img)
+            except Exception as e:
+                log_message(logging.ERROR, f"Error adding influence chart to PDF: {str(e)}", exc_info=True)
+                elements.append(Paragraph(f"Error including influence chart: {str(e)}", styles['Normal']))
+            
+            elements.append(Spacer(1, 12))
+            
+            if 'influence_df' in attribute_specific_results:
+                elements.append(Paragraph("Detailed Attribute Influence:", styles['Heading3']))
+                influence_df = attribute_specific_results['influence_df']
+                influence_data = [influence_df.columns.tolist()] + influence_df.values.tolist()
+                table_style = TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                    ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 8),
+                    ('TOPPADDING', (0, 0), (-1, -1), 6),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                ])
+                influence_table = Table(influence_data)
+                influence_table.setStyle(table_style)
+                elements.append(influence_table)
+        
+        # Build the PDF
+        log_message(logging.DEBUG, "Building PDF")
+        pdf_start_time = time.time()
+        doc.build(elements)
+        log_message(logging.DEBUG, f"Built PDF in {time.time() - pdf_start_time:.2f} seconds")
+        
+        # Reset buffer position
+        buffer.seek(0)
+        
+        overall_end_time = time.time()
+        log_message(logging.INFO, f"PDF report generated successfully in {overall_end_time - overall_start_time:.2f} seconds")
+        return buffer
+    except Exception as e:
+        log_message(logging.ERROR, f"Error in PDF report generation: {str(e)}", exc_info=True)
+        raise
+    finally:
+        if 'doc' in locals():
+            del doc  # Explicitly delete the SimpleDocTemplate object
+        cleanup_images(user_id)  # Clean up temporary image files
+
+if __name__ == "__main__":
+    # You can add any test code here if needed
+    pass
