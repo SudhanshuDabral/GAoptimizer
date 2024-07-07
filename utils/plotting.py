@@ -1,7 +1,7 @@
 import plotly.graph_objects as go
 import streamlit as st
 import plotly.express as px
-import numpy as np
+
 
 r2_values = []
 iterations = []
@@ -252,4 +252,27 @@ def plot_sensitivity_results(sensitivity_results, attribute_name):
         width=800
     )
 
+    return fig
+
+def create_influence_chart(influence_df):
+    """
+    Create a bar chart showing the influence of attributes on productivity.
+    
+    :param influence_df: DataFrame containing 'Attribute' and 'Influence' columns
+    :return: Plotly Figure object
+    """
+    fig = px.bar(influence_df, 
+                 x='Attribute', 
+                 y='Influence', 
+                 title='Attribute Influence on Productivity',
+                 labels={'Influence': 'Productivity Range'},
+                 color='Influence',
+                 color_continuous_scale='Viridis')
+    
+    fig.update_layout(
+        xaxis_title="Attribute",
+        yaxis_title="Productivity Range",
+        coloraxis_colorbar_title="Influence"
+    )
+    
     return fig

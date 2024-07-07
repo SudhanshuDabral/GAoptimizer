@@ -5,6 +5,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
+from streamlit_option_menu import option_menu
 
 # Disable Pillow debug logging
 logging.getLogger('PIL').setLevel(logging.WARNING)
@@ -152,18 +153,37 @@ def check_user_access(required_access):
 
 def navigation():
     with st.sidebar:
-        st.markdown('<div class="sidebar-nav">', unsafe_allow_html=True)
-        st.markdown('<h1>Navigation</h1>', unsafe_allow_html=True)
+        st.markdown('<h1 style="text-align: center;">Navigation</h1>', unsafe_allow_html=True)
 
-        nav_options = [
-            "GA Optimizer",
-            "Data Preparation",
-            "Dashboard"
-        ]
+        nav_options = ["GA Optimizer", "Data Preparation", "Dashboard"]
+        icons = ["diagram-3", "database-fill-check", "file-bar-graph"]
+        
         if st.session_state['is_admin']:
             nav_options.append("Admin Console")
+            icons.append("people-fill")
 
-        nav_choice = st.radio("Select a page", nav_options, key="nav_radio")
+        nav_choice = option_menu(
+            menu_title=None,
+            options=nav_options,
+            icons=icons,
+            menu_icon="cast",
+            default_index=0,
+            styles={
+                "container": {"padding": "0!important", "background-color": "#2D2D2D"},
+                "icon": {"color": "#00CED1", "font-size": "25px"},  # Distinct cyan color for icons
+                "nav-link": {
+                    "font-size": "16px", 
+                    "text-align": "left", 
+                    "margin": "0px", 
+                    "--hover-color": "#3D3D3D",
+                    "color": "#F5F5F5"
+                },
+                "nav-link-selected": {
+                    "background-color": "#CC5500",
+                    "color": "#FFFFFF",
+                },
+            }
+        )
 
         if nav_choice != st.session_state.get('current_page'):
             log_message(logging.INFO, f"Navigation changed from {st.session_state.get('current_page')} to {nav_choice}")
@@ -174,14 +194,12 @@ def navigation():
             
             st.session_state['current_page'] = nav_choice
 
-        st.markdown("<br>" * 5, unsafe_allow_html=True)
+        st.markdown("<br>" * 3, unsafe_allow_html=True)
         st.markdown('<hr style="margin: 20px 0;">', unsafe_allow_html=True)
 
         if authenticator.logout('Logout', 'main'):
             log_message(logging.INFO, "User logged out")
             st.rerun()
-
-        st.markdown('</div>', unsafe_allow_html=True)
 
     try:
         with st.spinner("Loading page..."):
@@ -196,6 +214,7 @@ def navigation():
     except Exception as e:
         log_message(logging.ERROR, f"Error in navigation: {str(e)}", exc_info=True)
         st.error("An unexpected error occurred. Please try refreshing the page or contact support if the issue persists.")
+        
 
 def clear_ga_optimizer_state():
     if 'ga_optimizer' in st.session_state:

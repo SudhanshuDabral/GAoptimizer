@@ -10,7 +10,8 @@ import logging
 from ga.ga_calculation import run_ga as run_ga_optimization
 from ga.check_monotonicity import check_monotonicity as check_monotonicity_func
 from utils.plotting import (plot_column, plot_actual_vs_predicted, create_tornado_chart,
-                            create_feature_importance_chart, create_elasticity_analysis, plot_sensitivity_results)
+                            create_feature_importance_chart, create_elasticity_analysis, 
+                            plot_sensitivity_results, create_influence_chart)
 from utils.ga_utils import (zscore_data, calculate_df_statistics,
                              validate_custom_equation, calculate_predicted_productivity, 
                              calculate_model_sensitivity, calculate_zscoredf_statistics, perform_sensitivity_test)
@@ -566,10 +567,19 @@ def sensitivity_test_section():
             'current_model': None
         }
 
-    # Model selection with both R² values
-    model_options = [f"Model {i+1} (Weighted R²: {result[1]:.4f}, Full Dataset R²: {result[8]:.4f})" 
-                     for i, result in enumerate(st.session_state.ga_optimizer['results'])]
-    model_options.append("Custom Equation")
+    # Check for the presence of models and zscored statistics
+    if not st.session_state.ga_optimizer['results']:
+        st.warning("No models have been generated. You can use a custom equation for sensitivity analysis.")
+        model_options = ["Custom Equation"]
+    else:
+        model_options = [f"Model {i+1} (Weighted R²: {result[1]:.4f}, Full Dataset R²: {result[8]:.4f})" 
+                         for i, result in enumerate(st.session_state.ga_optimizer['results'])]
+        model_options.append("Custom Equation")
+
+    if 'zscored_statistics' not in st.session_state.ga_optimizer:
+        st.error("Z-scored statistics are not available. Please process your data before proceeding with sensitivity analysis.")
+        return
+
     selected_model = st.selectbox("Select Model or Custom Equation", options=model_options)
 
     # Reset results if model changes
@@ -581,6 +591,15 @@ def sensitivity_test_section():
         }
 
     if selected_model == "Custom Equation":
+        st.info("""
+        You've selected to use a custom equation for sensitivity analysis. 
+        Please note that while your custom equation will be used for calculations, 
+        the sensitivity and applicability of this equation will be tested using 
+        the dataset currently loaded in the session. 
+        
+        Ensure that your equation is compatible with the variables in the current dataset 
+        for accurate results.
+        """)
         custom_equation = st.text_area(
             "Enter custom equation", 
             placeholder="Corrected_Prod = ... (use only tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, total_slurry_dp, median_slurry)", key='sensitivity_custom_eqn',
@@ -658,7 +677,6 @@ def sensitivity_test_section():
                             )
                             fig_sensitivity = plot_sensitivity_results(sensitivity_results, attr)
                             
-                            # Calculate range of productivity and min/max for the attribute
                             prod_min = sensitivity_results['Productivity'].min()
                             prod_max = sensitivity_results['Productivity'].max()
                             prod_range = prod_max - prod_min
@@ -683,8 +701,27 @@ def sensitivity_test_section():
             
             if st.session_state.sensitivity_results['attribute_specific']:
                 results = st.session_state.sensitivity_results['attribute_specific']
+                
+                # Consolidated view of attribute influence
+                st.subheader("Consolidated Attribute Influence")
+                influence_data = [
+                    {"Attribute": attr, "Productivity Range": data['prod_range'], "Influence": data['prod_range']}
+                    for attr, data in results.items()
+                ]
+                influence_df = pd.DataFrame(influence_data)
+                influence_df = influence_df.sort_values('Influence', ascending=False)
+                
+                # Display influence chart
+                fig_influence = create_influence_chart(influence_df)
+                st.plotly_chart(fig_influence, use_container_width=True)
+                
+                # Display detailed table
+                st.write("Detailed Attribute Influence:")
+                st.table(influence_df.style.format({'Productivity Range': '{:.4f}', 'Influence': '{:.4f}'}))
+                
+                # Individual attribute details
                 for attr, data in results.items():
-                    with st.expander(f"Sensitivity Analysis for {attr}", expanded=True):
+                    with st.expander(f"Sensitivity Analysis for {attr}", expanded=False):
                         if all(key in data for key in ['attr_min', 'attr_max', 'prod_min', 'prod_max', 'prod_range']):
                             st.write(f"**Attribute Range:** {data['attr_min']:.4f} to {data['attr_max']:.4f}")
                             st.write(f"**Productivity Range:** {data['prod_min']:.4f} to {data['prod_max']:.4f}")
@@ -722,7 +759,6 @@ def sensitivity_test_section():
             except Exception as e:
                 st.error(f"An error occurred while generating the PDF report: {str(e)}")
                 log_message(logging.ERROR, f"Error in PDF report generation: {str(e)}")
-
 # Genetic Algorithm Optimization
 def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, excluded_rows, regression_type, num_models):
     full_zscored_df = df.copy()
