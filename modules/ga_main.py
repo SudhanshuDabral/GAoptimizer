@@ -459,8 +459,16 @@ def monotonicity_check_modal():
     well_id = well_options[selected_well]
 
     stages = get_well_stages(well_id)
-    selected_stages = st.multiselect("Select Stage(s)", options=stages, key="monotonicity_stage_select")
-
+    
+    # Add "Select All" option
+    all_stages_option = "Select All Stages"
+    stage_options = [all_stages_option] + stages
+    
+    selected_stages = st.multiselect("Select Stage(s)", options=stage_options, key="monotonicity_stage_select")
+    
+    # Handle "Select All" option
+    if all_stages_option in selected_stages:
+        selected_stages = stages
 
     if 'results' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['results']:
         model_options = [f"Model {i+1} (Weighted R²: {result[1]:.4f}, Full Dataset R²: {result[8]:.4f})" 
@@ -498,14 +506,13 @@ def monotonicity_check_modal():
         st.write("Equation being used for monotonicity check:")
         st.code(equation_to_use)
     
-   
     if st.button("Run Monotonicity Check"):
-            if equation_to_use is None:
-                st.error("Please provide a valid equation before checking monotonicity.")
-            elif not selected_stages:
-                st.error("Please select at least one stage for monotonicity check.")
-            else:
-                run_monotonicity_check(well_id, selected_stages, equation_to_use)        
+        if equation_to_use is None:
+            st.error("Please provide a valid equation before checking monotonicity.")
+        elif not selected_stages:
+            st.error("Please select at least one stage for monotonicity check.")
+        else:
+            run_monotonicity_check(well_id, selected_stages, equation_to_use)        
     
     display_monotonicity_results(selected_stages)
 
@@ -663,7 +670,19 @@ def sensitivity_test_section():
         st.subheader("Attribute-Specific Sensitivity Test")
         if st.session_state.sensitivity_results['general']:
             predictors = st.session_state.sensitivity_results['general']['sensitivity_df']['Attribute'].tolist()
-            selected_attributes = st.multiselect("Select Attributes for Detailed Sensitivity Test", options=predictors, key="sensitivity_attributes_select")
+            
+            # Add "Select All" option
+            all_attributes_option = "Select All Attributes"
+            attribute_options = [all_attributes_option] + predictors
+            
+            selected_attributes = st.multiselect("Select Attributes for Detailed Sensitivity Test", 
+                                                options=attribute_options, 
+                                                key="sensitivity_attributes_select")
+            
+            # Handle "Select All" option
+            if all_attributes_option in selected_attributes:
+                selected_attributes = predictors
+            
             num_points = st.slider("Number of Test Points", min_value=5, max_value=50, value=20, key="sensitivity_num_points")
 
             if st.button("Run Attribute-Specific Sensitivity Test", key="run_attribute_sensitivity"):
