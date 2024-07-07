@@ -11,6 +11,9 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 import pandas as pd
 import shutil
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.enum.text import PP_ALIGN
 
 # Logger setup
 log_dir = 'logs'
@@ -212,6 +215,159 @@ def generate_pdf_report(custom_equation, baseline_productivity, sensitivity_df,
         if 'doc' in locals():
             del doc  # Explicitly delete the SimpleDocTemplate object
         cleanup_images(user_id)  # Clean up temporary image files
+
+def generate_ppt_report(custom_equation, baseline_productivity, general_results, attribute_specific_results, user_id):
+    overall_start_time = time.time()
+    log_message(logging.INFO, "Starting PowerPoint report generation")
+    prs = Presentation()
+    prs.slide_width = Inches(16)
+    prs.slide_height = Inches(9)
+
+    try:
+        # Title slide
+        title_slide_layout = prs.slide_layouts[0]
+        slide = prs.slides.add_slide(title_slide_layout)
+        title = slide.shapes.title
+        subtitle = slide.placeholders[1] if len(slide.placeholders) > 1 else None
+        title.text = "Sensitivity Analysis Report"
+        
+        subtitle_text = (
+            "This report presents the results of a sensitivity analysis conducted on a hydraulic fracturing productivity model.\n\n"
+            f"Baseline Productivity: {baseline_productivity:.4f}\n"
+            "Baseline Productivity represents the model's output when all inputs are at their median values.\n\n"
+            "The following slides show:\n"
+            "1. Model Equation\n"
+            "2. General Sensitivity Analysis Results\n"
+            "3. Attribute-Specific Sensitivity Results\n"
+            "4. Consolidated Attribute Influence\n\n"
+            "These analyses help identify which inputs have the most significant impact on the model's predictions."
+        )
+        if subtitle:
+            subtitle.text = subtitle_text
+        else:
+            # If there's no subtitle placeholder, add a text box
+            left = top = Inches(1)
+            width = Inches(14)
+            height = Inches(5)
+            txBox = slide.shapes.add_textbox(left, top, width, height)
+            tf = txBox.text_frame
+            tf.text = subtitle_text
+
+        # Adjust text size and alignment
+        for shape in slide.shapes:
+            if hasattr(shape, 'text_frame'):
+                for paragraph in shape.text_frame.paragraphs:
+                    paragraph.font.size = Pt(14)
+                    paragraph.alignment = PP_ALIGN.LEFT
+
+        # Model Equation slide
+        slide = prs.slides.add_slide(prs.slide_layouts[5])  # Layout with title and content
+        title = slide.shapes.title
+        title.text = "Model Equation"
+        
+        # Add space between title and equation
+        top = Inches(2)  # Increased from 1 to 2 inches
+        left = Inches(0.5)
+        width = Inches(15)
+        height = Inches(5.5)
+        txBox = slide.shapes.add_textbox(left, top, width, height)
+        tf = txBox.text_frame
+        tf.word_wrap = True
+        
+        # Split the equation into multiple lines
+        max_chars_per_line = 100
+        equation_lines = []
+        current_line = ""
+        for word in custom_equation.split():
+            if len(current_line) + len(word) + 1 <= max_chars_per_line:
+                current_line += " " + word if current_line else word
+            else:
+                equation_lines.append(current_line)
+                current_line = word
+        if current_line:
+            equation_lines.append(current_line)
+        
+        # Add each line of the equation to the text frame
+        for i, line in enumerate(equation_lines):
+            if i == 0:
+                p = tf.paragraphs[0]
+            else:
+                p = tf.add_paragraph()
+            p.text = line
+            p.font.size = Pt(18)  # Increased font size
+            p.alignment = PP_ALIGN.LEFT
+
+
+        # General Sensitivity Analysis Results
+        plot_info = {
+            "Tornado Chart": "Sensitivity of the model to each input variable",
+            "Feature Importance Chart": "Relative importance of each feature in the model",
+            "Elasticity Analysis": "Responsiveness of the model output to changes in each input variable"
+        }
+
+        for title, fig in [("Tornado Chart", general_results['fig_tornado']), 
+                           ("Feature Importance Chart", general_results['fig_importance']), 
+                           ("Elasticity Analysis", general_results['fig_elasticity'])]:
+            blank_slide_layout = prs.slide_layouts[6]
+            slide = prs.slides.add_slide(blank_slide_layout)
+            
+            # Add a text box for the title
+            left = top = width = height = Inches(1)
+            txBox = slide.shapes.add_textbox(left, top, width, height)
+            tf = txBox.text_frame
+            tf.text = title
+            
+            # Add description
+            desc_box = slide.shapes.add_textbox(left, Inches(1.5), width, height)
+            desc_tf = desc_box.text_frame
+            desc_tf.text = plot_info[title]
+            
+            img_path = save_plot_as_image(fig, title.lower().replace(" ", "_"), user_id)
+            slide.shapes.add_picture(img_path, Inches(1), Inches(2.5), width=Inches(14), height=Inches(5.5))
+
+        # Attribute-Specific Sensitivity Results
+        for attr, data in attribute_specific_results.items():
+            if attr not in ['influence_df', 'fig_influence']:
+                blank_slide_layout = prs.slide_layouts[6]
+                slide = prs.slides.add_slide(blank_slide_layout)
+                
+                # Add a text box for the title
+                left = top = width = height = Inches(1)
+                txBox = slide.shapes.add_textbox(left, top, width, height)
+                tf = txBox.text_frame
+                tf.text = f"Sensitivity Analysis for {attr}"
+                
+                img_path = save_plot_as_image(data['fig'], f"sensitivity_{attr}", user_id)
+                slide.shapes.add_picture(img_path, Inches(1), Inches(2), width=Inches(14), height=Inches(6))
+
+        # Consolidated Attribute Influence
+        if 'fig_influence' in attribute_specific_results:
+            blank_slide_layout = prs.slide_layouts[6]
+            slide = prs.slides.add_slide(blank_slide_layout)
+            
+            # Add a text box for the title
+            left = top = width = height = Inches(1)
+            txBox = slide.shapes.add_textbox(left, top, width, height)
+            tf = txBox.text_frame
+            tf.text = "Consolidated Attribute Influence"
+            
+            img_path = save_plot_as_image(attribute_specific_results['fig_influence'], "influence_chart", user_id)
+            slide.shapes.add_picture(img_path, Inches(1), Inches(2), width=Inches(14), height=Inches(6))
+
+        # Save the presentation
+        ppt_buffer = BytesIO()
+        prs.save(ppt_buffer)
+        ppt_buffer.seek(0)
+
+        overall_end_time = time.time()
+        log_message(logging.INFO, f"PowerPoint report generated successfully in {overall_end_time - overall_start_time:.2f} seconds")
+        return ppt_buffer
+
+    except Exception as e:
+        log_message(logging.ERROR, f"Error in PowerPoint report generation: {str(e)}")
+        raise
+    finally:
+        cleanup_images(user_id)
 
 if __name__ == "__main__":
     # You can add any test code here if needed

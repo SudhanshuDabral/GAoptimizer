@@ -15,11 +15,12 @@ from utils.plotting import (plot_column, plot_actual_vs_predicted, create_tornad
 from utils.ga_utils import (zscore_data, calculate_df_statistics,
                              validate_custom_equation, calculate_predicted_productivity, 
                              calculate_model_sensitivity, calculate_zscoredf_statistics, perform_sensitivity_test)
-from utils.reporting import generate_pdf_report
+
+from utils.reporting import generate_pdf_report, generate_ppt_report
 import time
 import os
 import numpy as np
-from streamlit_option_menu import option_menu
+
 
 # Set up logging
 log_dir = 'logs'
@@ -580,7 +581,7 @@ def sensitivity_test_section():
         st.error("Z-scored statistics are not available. Please process your data before proceeding with sensitivity analysis.")
         return
 
-    selected_model = st.selectbox("Select Model or Custom Equation", options=model_options)
+    selected_model = st.selectbox("Select Model or Custom Equation", options=model_options, key="sensitivity_model_select")
 
     # Reset results if model changes
     if selected_model != st.session_state.sensitivity_results.get('current_model'):
@@ -602,7 +603,8 @@ def sensitivity_test_section():
         """)
         custom_equation = st.text_area(
             "Enter custom equation", 
-            placeholder="Corrected_Prod = ... (use only tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, total_slurry_dp, median_slurry)", key='sensitivity_custom_eqn',
+            placeholder="Corrected_Prod = ... (use only tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, total_slurry_dp, median_slurry)", 
+            key='sensitivity_custom_eqn',
             height=100
         )
         is_valid, validation_message = validate_custom_equation(custom_equation)
@@ -622,7 +624,7 @@ def sensitivity_test_section():
 
     with tab1:
         st.subheader("General Sensitivity Analysis")
-        if st.button("Run General Sensitivity Analysis"):
+        if st.button("Run General Sensitivity Analysis", key="run_general_sensitivity"):
             with st.spinner("Running General Sensitivity Analysis..."):
                 try:
                     baseline_productivity, sensitivity_df = calculate_model_sensitivity(
@@ -661,10 +663,10 @@ def sensitivity_test_section():
         st.subheader("Attribute-Specific Sensitivity Test")
         if st.session_state.sensitivity_results['general']:
             predictors = st.session_state.sensitivity_results['general']['sensitivity_df']['Attribute'].tolist()
-            selected_attributes = st.multiselect("Select Attributes for Detailed Sensitivity Test", options=predictors)
-            num_points = st.slider("Number of Test Points", min_value=5, max_value=50, value=20)
+            selected_attributes = st.multiselect("Select Attributes for Detailed Sensitivity Test", options=predictors, key="sensitivity_attributes_select")
+            num_points = st.slider("Number of Test Points", min_value=5, max_value=50, value=20, key="sensitivity_num_points")
 
-            if st.button("Run Attribute-Specific Sensitivity Test"):
+            if st.button("Run Attribute-Specific Sensitivity Test", key="run_attribute_sensitivity"):
                 with st.spinner("Running Attribute-Specific Sensitivity Test..."):
                     try:
                         attribute_results = {}
@@ -734,41 +736,58 @@ def sensitivity_test_section():
                             else:
                                 st.warning(f"Complete data not available for {attr}. Please rerun the analysis.")
                             
-                            if 'fig' in data:
-                                st.plotly_chart(data['fig'], use_container_width=True)
-                            else:
-                                st.warning(f"No plot available for {attr}. Please rerun the analysis.")
+                            st.plotly_chart(data['fig'], use_container_width=True)
                             
-                            if 'results' in data and len(selected_attributes) == 1:
+                            if len(selected_attributes) == 1:
                                 st.dataframe(data['results'], use_container_width=True, hide_index=True)
         else:
             st.warning("Please run the General Sensitivity Analysis first.")
 
-    if st.button("Export Report"):
-        try:
-            with st.spinner("Generating PDF report... This may take a few moments."):
-                pdf_buffer = generate_pdf_report(
-                    equation_to_use,
-                    st.session_state.sensitivity_results['general']['baseline_productivity'],
-                    st.session_state.sensitivity_results['general']['sensitivity_df'],
-                    st.session_state.sensitivity_results['general'],
-                    st.session_state.sensitivity_results['attribute_specific'],
-                    st.session_state.user_id
-                )
-            
-            if pdf_buffer:
-                st.download_button(
-                    label="Download PDF Report",
-                    data=pdf_buffer,
-                    file_name="sensitivity_analysis_report.pdf",
-                    mime="application/pdf"
-                )
-                st.success("PDF report generated successfully. Click the download button to save it.")
-            else:
-                st.error("Failed to generate the PDF report. Please check the logs for more information.")
-        except Exception as e:
-            st.error(f"An error occurred while generating the PDF report: {str(e)}")
-            log_message(logging.ERROR, f"Error in PDF report generation: {str(e)}", exc_info=True)
+    if st.session_state.sensitivity_results['general'] and st.session_state.sensitivity_results['attribute_specific']:
+        st.markdown("---")  # Add a horizontal line for separation
+        st.subheader("Export Report")
+        
+        report_format = st.selectbox("Select Report Format", ["PDF", "PowerPoint"], key="sensitivity_report_format")
+
+        if st.button("Generate and Download Report", key="sensitivity_generate_report"):
+            try:
+                with st.spinner(f"Generating {report_format} report... This may take a few moments."):
+                    if report_format == "PDF":
+                        report_buffer = generate_pdf_report(
+                            equation_to_use,
+                            st.session_state.sensitivity_results['general']['baseline_productivity'],
+                            st.session_state.sensitivity_results['general']['sensitivity_df'],
+                            st.session_state.sensitivity_results['general'],
+                            st.session_state.sensitivity_results['attribute_specific'],
+                            st.session_state.user_id
+                        )
+                        file_extension = "pdf"
+                        mime_type = "application/pdf"
+                    else:  # PowerPoint
+                        report_buffer = generate_ppt_report(
+                            equation_to_use,
+                            st.session_state.sensitivity_results['general']['baseline_productivity'],
+                            st.session_state.sensitivity_results['general'],
+                            st.session_state.sensitivity_results['attribute_specific'],
+                            st.session_state.user_id
+                        )
+                        file_extension = "pptx"
+                        mime_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                
+                if report_buffer:
+                    st.download_button(
+                        label=f"Download {report_format} Report",
+                        data=report_buffer,
+                        file_name=f"sensitivity_analysis_report.{file_extension}",
+                        mime=mime_type
+                    )
+                    st.success(f"{report_format} report generated successfully. Click the download button to save it.")
+                else:
+                    st.error(f"Failed to generate the {report_format} report. Please check the logs for more information.")
+            except Exception as e:
+                st.error(f"An error occurred while generating the {report_format} report: {str(e)}")
+                log_message(logging.ERROR, f"Error in {report_format} report generation: {str(e)}", exc_info=True)
+    
 
 
 # Genetic Algorithm Optimization
