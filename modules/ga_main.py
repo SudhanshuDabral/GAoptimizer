@@ -61,6 +61,7 @@ def initialize_ga_state():
             'prob_mutation': 0.2,
             'num_generations': 40,
             'population_size': 50,
+            'predictors': [],
         }
 
 def start_ga_optimization_callback():
@@ -382,7 +383,9 @@ def display_ga_results():
                                 'full_dataset_r2': full_dataset_r2,
                                 'selected_feature_names': selected_feature_names
                             }
-                            
+                             # Get the predictors from the session state
+                            predictors = st.session_state.ga_optimizer.get('predictors', [])
+
                             # Call the database function to save the model
                             result = insert_ga_model(
                                 model_name,
@@ -393,7 +396,8 @@ def display_ga_results():
                                 excluded_rows,
                                 sensitivity_df,
                                 st.session_state.ga_optimizer['zscored_statistics'],
-                                baseline_productivity
+                                baseline_productivity,
+                                predictors
                                 )
                             
                             if result['status'] == 'success':
@@ -813,6 +817,9 @@ def sensitivity_test_section():
 def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, excluded_rows, regression_type, num_models):
     full_zscored_df = df.copy()
     df = df[~df['data_id'].isin(excluded_rows)]
+
+    #add predictors to session state variable for model saving
+    st.session_state.ga_optimizer['predictors'] = predictors
     
     start_time = time.time()
     timer_placeholder = st.empty()

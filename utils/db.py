@@ -358,7 +358,7 @@ def convert_excluded_rows(excluded_rows_string):
 
 
 # Function to insert the GA model into the database
-def insert_ga_model(model_name, user_id, ga_params, ga_results, zscored_df, excluded_rows, sensitivity_df, zscored_statistics, baseline_productivity):
+def insert_ga_model(model_name, user_id, ga_params, ga_results, zscored_df, excluded_rows, sensitivity_df, zscored_statistics, baseline_productivity, predictors):
     log_message(logging.INFO, f"Inserting GA model: {model_name}")
     try:
         conn = get_db_connection()
@@ -397,6 +397,11 @@ def insert_ga_model(model_name, user_id, ga_params, ga_results, zscored_df, excl
         total_impact = sensitivity_df['Impact_Range'].sum()
         sensitivity_df['Relative_Impact'] = sensitivity_df['Impact_Range'] / total_impact
         
+        # Add Min Value and Max Value columns to sensitivity_df
+        for attr in sensitivity_df['Attribute']:
+            sensitivity_df.loc[sensitivity_df['Attribute'] == attr, 'Min Value'] = zscored_statistics[attr]['min']
+            sensitivity_df.loc[sensitivity_df['Attribute'] == attr, 'Max Value'] = zscored_statistics[attr]['max']
+        
         # Prepare the parameters for the function
         params = [
             model_name,
@@ -407,23 +412,23 @@ def insert_ga_model(model_name, user_id, ga_params, ga_results, zscored_df, excl
             int(ga_params['num_generations']),
             int(ga_params['population_size']),
             ga_params['regression_type'],
-            ','.join(ga_params['feature_selection']),
             ga_results['response_equation'],
             float(ga_results['best_r2_score']),
             float(ga_results['full_dataset_r2']),
             ','.join(ga_results['selected_feature_names']),
             Json(zscored_df.to_dict('records')),
             excluded_rows_list,
-            Json(sensitivity_df.to_dict('records'))
+            Json(sensitivity_df.to_dict('records')),
+            ','.join(predictors)
         ]
-        
+
         # Call the function
         cur.execute("""
             SELECT * FROM insert_ga_model(%s, %s, %s, %s, 
             %s, %s, %s, %s, %s, %s, 
             %s, %s, %s, %s, %s, %s)
         """, params)
-        
+            
         # Fetch the result
         result = cur.fetchone()
         
