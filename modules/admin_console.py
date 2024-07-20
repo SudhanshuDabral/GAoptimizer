@@ -94,7 +94,7 @@ def main(authentication_status):
                 new_name = st.text_input("Name", user_info['Name'])
                 new_is_admin = st.checkbox("Is Admin", user_info['Is Admin'])
                 
-                all_pages = ["GA Optimizer", "Data Preparation", "Dashboard"]  # Add all possible pages here
+                all_pages = ["GA Optimizer", "Data Preparation", "Dashboard", "Model Explorer"]
                 new_access = st.multiselect("Page Access", all_pages, default=user_info['Page Access'].split(', '))
                 
                 submit_button = st.form_submit_button("Update User")
@@ -126,7 +126,7 @@ def main(authentication_status):
             confirm_password = st.text_input("Confirm Password", type="password")
             new_is_admin = st.checkbox("Is Admin")
             
-            all_pages = ["GA Optimizer", "Data Preparation", "Dashboard"]  # Add all possible pages here
+            all_pages = ["GA Optimizer", "Data Preparation", "Dashboard", "Model Explorer"]
             new_access = st.multiselect("Page Access", all_pages)
             
             submit_button = st.form_submit_button("Add User")

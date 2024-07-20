@@ -25,6 +25,7 @@ import modules.ga_main as ga_main
 import modules.data_prep as data_prep
 import modules.dashboard as dashboard
 import modules.admin_console as admin_console
+import modules.model_explorer as model_explorer
 from static.styles import load_css, set_page_container_style, display_header
 
 # Set up logging
@@ -155,8 +156,8 @@ def navigation():
     with st.sidebar:
         st.markdown('<h1 style="text-align: center;">Navigation</h1>', unsafe_allow_html=True)
 
-        nav_options = ["GA Optimizer", "Data Preparation", "Dashboard"]
-        icons = ["diagram-3", "database-fill-check", "file-bar-graph"]
+        nav_options = ["GA Optimizer", "Data Preparation", "Dashboard", "Model Explorer"]  
+        icons = ["diagram-3", "database-fill-check", "file-bar-graph", "search"]  
         
         if st.session_state['is_admin']:
             nav_options.append("Admin Console")
@@ -209,6 +210,8 @@ def navigation():
                 data_prep.main(st.session_state["authentication_status"])
             elif nav_choice == "Dashboard" and check_user_access("Dashboard"):
                 dashboard.main(st.session_state["authentication_status"])
+            elif nav_choice == "Model Explorer" and check_user_access("Model Explorer"):  # Add this condition
+                model_explorer.main(st.session_state["authentication_status"])
             elif nav_choice == "Admin Console" and st.session_state['is_admin']:
                 admin_console.main(st.session_state["authentication_status"])
     except Exception as e:

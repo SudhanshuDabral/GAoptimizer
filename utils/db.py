@@ -5,6 +5,7 @@ from psycopg2.extras import RealDictCursor
 from streamlit_authenticator.utilities.hasher import Hasher
 import streamlit as st
 import json
+import pandas as pd
 import string
 import secrets
 import logging
@@ -52,7 +53,7 @@ def fetch_all_users():
     log_message(logging.INFO, f"Fetched {len(users)} users")
     return users
 
-@st.cache_data(ttl=3600)
+
 def fetch_user_access(username):
     log_message(logging.INFO, f"Fetching access for user: {username}")
     conn = get_db_connection()
@@ -460,3 +461,85 @@ def insert_ga_model(model_name, user_id, ga_params, ga_results, zscored_df, excl
             cur.close()
         if conn:
             conn.close()
+
+#################################db functions for model_explorer.py############################################
+def fetch_all_models_with_users():
+    log_message(logging.INFO, "Fetching all models with user information")
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT gm.model_id, gm.model_name, gm.created_on, um.name as created_by
+                    FROM ga_model gm
+                    JOIN user_master um ON gm.updated_by = um.user_id
+                    ORDER BY gm.created_on DESC
+                """)
+                models = cur.fetchall()
+        log_message(logging.INFO, f"Successfully fetched {len(models)} models")
+        return models
+    except Exception as e:
+        log_message(logging.ERROR, f"Error fetching models with user information: {str(e)}")
+        return None
+
+def fetch_model_details(model_id):
+    log_message(logging.INFO, f"Fetching details for model_id: {model_id}")
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT gm.*, mr.equation, mr.weighted_r2_score, mr.full_dataset_r2_score, mr.selected_feature_names
+                    FROM ga_model gm
+                    JOIN model_results mr ON gm.model_id = mr.model_id
+                    WHERE gm.model_id = %s
+                """, (model_id,))
+                model_details = cur.fetchone()
+        
+        if model_details:
+            log_message(logging.INFO, f"Successfully fetched details for model_id: {model_id}")
+            # Convert comma-separated strings to lists
+            model_details['predictors'] = model_details['predictors'].split(',')
+            model_details['selected_feature_names'] = model_details['selected_feature_names'].split(',')
+        else:
+            log_message(logging.WARNING, f"No details found for model_id: {model_id}")
+        return model_details
+    except Exception as e:
+        log_message(logging.ERROR, f"Error fetching model details for model_id {model_id}: {str(e)}")
+        return None
+
+def fetch_training_data(model_id):
+    log_message(logging.INFO, f"Fetching training data for model_id: {model_id}")
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT mtd.*, wm.well_name
+                    FROM model_training_data mtd
+                    JOIN well_master wm ON mtd.well_id = wm.well_id
+                    WHERE mtd.model_id = %s
+                """, (model_id,))
+                columns = [desc[0] for desc in cur.description]
+                data = cur.fetchall()
+                df = pd.DataFrame(data, columns=columns)
+        log_message(logging.INFO, f"Successfully fetched {len(df)} training data records for model_id: {model_id}")
+        return df
+    except Exception as e:
+        log_message(logging.ERROR, f"Error fetching training data for model_id {model_id}: {str(e)}")
+        return None
+
+def fetch_sensitivity_data(model_id):
+    log_message(logging.INFO, f"Fetching sensitivity data for model_id: {model_id}")
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT * FROM model_sensitivity
+                    WHERE model_id = %s
+                """, (model_id,))
+                columns = [desc[0] for desc in cur.description]
+                data = cur.fetchall()
+                df = pd.DataFrame(data, columns=columns)
+        log_message(logging.INFO, f"Successfully fetched {len(df)} sensitivity data records for model_id: {model_id}")
+        return df
+    except Exception as e:
+        log_message(logging.ERROR, f"Error fetching sensitivity data for model_id {model_id}: {str(e)}")
+        return None
