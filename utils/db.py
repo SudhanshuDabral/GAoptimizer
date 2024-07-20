@@ -11,6 +11,7 @@ import secrets
 import logging
 from logging.handlers import RotatingFileHandler
 from psycopg2.extras import Json, register_uuid
+from psycopg2.extras import execute_values
 
 
 # Set up logging
@@ -76,54 +77,116 @@ def hash_password(password):
     hashed_passwords = hasher.generate()
     return hashed_passwords[0] if hashed_passwords else None
 
-def call_insert_or_update_well_and_consolidated_output(well_details, data, user_id):
-    log_message(logging.INFO, f"Inserting/updating well and consolidated output for well: {well_details['Well Name']}")
+def update_modeling_data(well_id, consolidated_output, user_id):
+    log_message(logging.INFO, f"Updating modeling data for well_id: {well_id}")
     try:
         conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        data_json = json.dumps(data)
+        cur = conn.cursor()
 
-        query = """
-        SELECT insert_or_update_well_and_consolidated_output(%s, %s, %s, %s, %s, %s, %s, %s) AS result
-        """
-        cur.execute(query, (
-            well_details["Well Name"],
-            well_details["Well API"],
-            well_details["Latitude"],
-            well_details["Longitude"],
-            well_details["TVD (ft)"],
-            well_details["Reservoir Pressure"],
-            user_id,
-            data_json
-        ))
+        # Get existing stages for this well
+        cur.execute("SELECT stage FROM data_for_modeling WHERE well_id = %s", (well_id,))
+        existing_stages = set(row[0] for row in cur.fetchall())
 
-        raw_result = cur.fetchone()
+        result = []
 
-        if raw_result and 'result' in raw_result:
-            result_str = raw_result['result']
-            conn.commit()
-            cur.close()
-            conn.close()
+        # Update existing records and insert new ones
+        for row in consolidated_output:
+            if row['Stages'] in existing_stages:
+                # Update existing record
+                update_query = """
+                UPDATE data_for_modeling 
+                SET tee = %s, median_dhpm = %s, median_dp = %s, downhole_ppm = %s, 
+                    total_dhppm = %s, total_slurry_dp = %s, median_slurry = %s, 
+                    updated_by = %s, updated_on = CURRENT_TIMESTAMP
+                WHERE well_id = %s AND stage = %s
+                RETURNING data_id, stage
+                """
+                cur.execute(update_query, (
+                    row['TEE'],
+                    row['MedianDHPM'],
+                    row['MedianDP'],
+                    row['DownholePPM'],
+                    row['TotalDHPPM'],
+                    row['TotalSlurryDP'],
+                    row['MedianSlurry'],
+                    user_id,
+                    well_id,
+                    row['Stages']
+                ))
+            else:
+                # Insert new record
+                insert_query = """
+                INSERT INTO data_for_modeling 
+                (well_id, tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, 
+                 total_slurry_dp, median_slurry, stage, updated_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING data_id, stage
+                """
+                cur.execute(insert_query, (
+                    well_id,
+                    row['TEE'],
+                    row['MedianDHPM'],
+                    row['MedianDP'],
+                    row['DownholePPM'],
+                    row['TotalDHPPM'],
+                    row['TotalSlurryDP'],
+                    row['MedianSlurry'],
+                    row['Stages'],
+                    user_id
+                ))
 
-            json_start = result_str.find('[')
-            json_end = result_str.rfind(']') + 1
-            json_str = result_str[json_start:json_end]
-           
-            json_str = json_str.replace('""', '"')
-            result = json.loads(json_str)
-            log_message(logging.INFO, f"Successfully inserted/updated well: {well_details['Well Name']}")
-            return result
-        else:
-            conn.commit()
-            cur.close()
-            conn.close()
-            log_message(logging.WARNING, f"No result returned for well: {well_details['Well Name']}")
-            return None
+            # Fetch the result of each operation
+            operation_result = cur.fetchone()
+            if operation_result:
+                result.append({"data_id": str(operation_result[0]), "stage": operation_result[1]})
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        log_message(logging.INFO, f"Successfully updated/inserted {len(result)} records for well_id: {well_id}")
+        return result
 
     except Exception as error:
-        log_message(logging.ERROR, f"Error inserting/updating well {well_details['Well Name']}: {str(error)}")
+        log_message(logging.ERROR, f"Error updating modeling data for well_id {well_id}: {str(error)}")
         return None
     
+def bulk_insert_well_completion_records(well_id, stage, data, user_id):
+    log_message(logging.INFO, f"Bulk inserting well completion records for well_id: {well_id}, stage: {stage}")
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Prepare the data for bulk insertion
+        records = [
+            (well_id, stage, row['treating_pressure'], row['slurry_rate'], 
+             row['bottomhole_prop_mass'], row['time_seconds'], 
+             row['epoch'], user_id)
+            for _, row in data.iterrows()
+        ]
+
+        # Perform bulk insert
+        insert_query = """
+        INSERT INTO well_completion_records 
+        (well_id, stage, treating_pressure, slurry_rate, bottomhole_prop_mass, time_seconds, epoch, updated_by)
+        VALUES %s
+        """
+        execute_values(cur, insert_query, records)
+
+        conn.commit()
+        inserted_count = cur.rowcount
+        cur.close()
+        conn.close()
+
+        log_message(logging.INFO, f"Successfully inserted {inserted_count} well completion records for well_id: {well_id}, stage: {stage}")
+        return {"status": "success", "records_inserted": inserted_count}
+
+    except Exception as error:
+        log_message(logging.ERROR, f"Error inserting well completion records for well_id {well_id}, stage {stage}: {str(error)}")
+        return {"status": "error", "message": str(error)}
+
+
+
 def call_insert_arrays_data(data_id, arrays_data, user_id):
     log_message(logging.INFO, f"Inserting arrays data for data_id: {data_id}")
     try:
@@ -157,6 +220,29 @@ def call_insert_arrays_data(data_id, arrays_data, user_id):
     except Exception as error:
         log_message(logging.ERROR, f"Error inserting arrays data for data_id {data_id}: {str(error)}")
         return {'status': 'error', 'message': str(error)}
+    
+def create_new_well(well_name, well_api, latitude, longitude, tvd, reservoir_pressure, user_id):
+    log_message(logging.INFO, f"Creating new well: {well_name}")
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        cur.execute("""
+            INSERT INTO well_master (well_name, well_api, latitude, longitude, tvd, reservoir_pressure, updated_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING well_id
+        """, (well_name, well_api, float(latitude), float(longitude), float(tvd), float(reservoir_pressure), user_id))
+        
+        well_id = cur.fetchone()[0]
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        log_message(logging.INFO, f"Successfully created well: {well_name} with ID: {well_id}")
+        return well_id
+    except Exception as error:
+        log_message(logging.ERROR, f"Error creating well {well_name}: {str(error)}")
+        return None
 
 @st.cache_data
 def get_well_details():

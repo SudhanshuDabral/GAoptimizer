@@ -4,12 +4,14 @@ import pandas as pd
 import numpy as np
 import os
 import re
-from utils.db import call_insert_or_update_well_and_consolidated_output, call_insert_arrays_data
+from utils.db import (update_modeling_data, call_insert_arrays_data, 
+                      create_new_well, get_well_details, bulk_insert_well_completion_records)
 
 def initialize_data_prep_state():
     if 'data_prep' not in st.session_state:
         st.session_state.data_prep = {
             'well_details': None,
+            'well_id': None,
             'processing_files': False,
             'consolidated_output': None
         }
@@ -22,10 +24,37 @@ def main(authentication_status):
     initialize_data_prep_state()
 
     st.title("Data Preparation")
-    st.write("Provide the well details and upload CSV files for each stage of the well completion.")
+    st.write("Select an existing well or create a new one, then upload CSV files for each stage of the well completion.")
 
-    # Form to input well details
-    if st.session_state.data_prep['well_details'] is None:
+    # Get existing wells
+    existing_wells = get_well_details()
+    
+    # Well selection or creation
+    well_option = st.radio("Choose an option:", ["Select Existing Well", "Create New Well"])
+
+    if well_option == "Select Existing Well":
+        if existing_wells:
+            selected_well = st.selectbox("Select a well:", 
+                                         options=[f"{well['well_name']} (API: {well['well_api']})" for well in existing_wells],
+                                         format_func=lambda x: x.split(" (API:")[0])
+            if selected_well:
+                well_name = selected_well.split(" (API:")[0]
+                selected_well_details = next((well for well in existing_wells if well['well_name'] == well_name), None)
+                if selected_well_details:
+                    st.session_state.data_prep['well_id'] = selected_well_details['well_id']
+                    st.session_state.data_prep['well_details'] = {
+                        "Well Name": selected_well_details['well_name'],
+                        "Well API": selected_well_details['well_api'],
+                        "Latitude": selected_well_details['latitude'],
+                        "Longitude": selected_well_details['longitude'],
+                        "TVD (ft)": selected_well_details['tvd'],
+                        "Reservoir Pressure": selected_well_details['reservoir_pressure']
+                    }
+        else:
+            st.warning("No existing wells found. Please create a new well.")
+            well_option = "Create New Well"
+
+    if well_option == "Create New Well":
         with st.form("well_details_form"):
             well_name = st.text_input("Well Name")
             well_api = st.text_input("Well API")
@@ -34,7 +63,6 @@ def main(authentication_status):
             tvd = st.text_input("TVD (ft)")
             reservoir_pressure = st.text_input("Reservoir Pressure")
 
-            # Submit button
             submitted = st.form_submit_button("Submit")
 
             if submitted:
@@ -74,28 +102,45 @@ def main(authentication_status):
                 except ValueError:
                     st.error("Reservoir Pressure should be a valid number.")
 
-                # If all validations pass, save the well details
+                # Check if well already exists
+                well_exists = any(
+                    well['well_name'] == well_name or well['well_api'] == well_api
+                    for well in existing_wells
+                )
+                if well_exists:
+                    st.error("A well with this name or API already exists. Please use a unique name and API.")
+                    return
+
+                # If all validations pass, create the new well
                 if (
                     len(well_name) <= 255 and well_api.isdigit() and
                     (-90 <= latitude <= 90) and (-180 <= longitude <= 180) and
                     (500 <= tvd <= 15500) and (2000 <= reservoir_pressure <= 8500)
                 ):
-                    st.session_state.data_prep['well_details'] = {
-                        "Well Name": well_name,
-                        "Well API": well_api,
-                        "Latitude": latitude,
-                        "Longitude": longitude,
-                        "TVD (ft)": tvd,
-                        "Reservoir Pressure": reservoir_pressure
-                    }
-                    st.experimental_rerun()
+                    new_well_id = create_new_well(well_name, well_api, latitude, longitude, tvd, reservoir_pressure, st.session_state['user_id'])
+                    if new_well_id:
+                        st.success("New well created successfully!")
+                        st.session_state.data_prep['well_id'] = new_well_id
+                        st.session_state.data_prep['well_details'] = {
+                            "Well Name": well_name,
+                            "Well API": well_api,
+                            "Latitude": latitude,
+                            "Longitude": longitude,
+                            "TVD (ft)": tvd,
+                            "Reservoir Pressure": reservoir_pressure
+                        }
+                        st.experimental_rerun()
+                    else:
+                        st.error("Failed to create new well. Please try again.")
 
-    if st.session_state.data_prep['well_details'] is not None:
+    if st.session_state.data_prep['well_id'] is not None:
         well_details = st.session_state.data_prep['well_details']
-        st.subheader("Well Information")
-        st.table(pd.DataFrame([well_details]))
+        
+        if well_option == "Select Existing Well":
+            st.subheader("Well Information")
+            st.dataframe(pd.DataFrame([well_details]), hide_index=True, use_container_width=True)
+            st.write("Well details submitted. Now upload the CSV files for each stage.")
 
-        st.write("Well details submitted. Now upload the CSV files for each stage.")
         uploaded_files = st.file_uploader("Upload CSV files", accept_multiple_files=True, type=["csv"])
 
         if uploaded_files:
@@ -111,7 +156,7 @@ def main(authentication_status):
 
             # Add a button to save data in DB
             if st.button("Save Data in DB"):
-                save_data_in_db(well_details, st.session_state.data_prep['consolidated_output'], st.session_state['user_id'])
+                save_data_in_db(st.session_state.data_prep['well_id'], st.session_state.data_prep['consolidated_output'], st.session_state['user_id'])
 
 def extract_stage(filename):
     match = re.search(r'_(\d+)\.csv', filename)
@@ -150,6 +195,7 @@ def process_files(files, well_details):
         data = pd.read_csv(temp_file_path)
         # Ensure timestamp_utc is in datetime format and calculate seconds from the first timestamp
         data['timestamp_utc'] = pd.to_datetime(data['timestamp_utc'])
+
         data['seconds'] = (data['timestamp_utc'] - data['timestamp_utc'].min()).dt.total_seconds()
     
         # Extract data using column headers
@@ -157,6 +203,21 @@ def process_files(files, well_details):
         SlRate = data['slurry_rate'].values
         Pres = data['treating_pressure'].values
         DownHoleProp = data['bottomhole_prop_mass'].values
+
+        completion_data = pd.DataFrame({
+        'treating_pressure': data['treating_pressure'],
+        'slurry_rate': data['slurry_rate'],
+        'bottomhole_prop_mass': data['bottomhole_prop_mass'],
+        'time_seconds': data['seconds'].astype(int),
+        'epoch': data['epoch']  # Use the original timestamp_utc value
+    })
+
+        insert_result = bulk_insert_well_completion_records(st.session_state.data_prep['well_id'], stage, completion_data, user_id)
+
+        if insert_result['status'] == 'error':
+            st.error(f"Failed to insert well completion records for stage {stage}: {insert_result['message']}")
+            continue
+        
 
         # Filter by SlRate > 2
         IndexS = np.where(SlRate > 2)[0]
@@ -264,21 +325,21 @@ def process_files(files, well_details):
         mime="text/csv"
     )
 
-def save_data_in_db(well_details, consolidated_output, user_id):
-    # Insert well information and consolidated output
-    summary = call_insert_or_update_well_and_consolidated_output(
-        well_details, consolidated_output.to_dict(orient='records'), user_id)
+def save_data_in_db(well_id, consolidated_output, user_id):
+    # Update modeling data
+    modeling_data_summary = update_modeling_data(well_id, consolidated_output.to_dict(orient='records'), user_id)
 
-    if summary is None:
-        st.error("Failed to insert well information and consolidated output into the database.")
+    if modeling_data_summary is None:
+        st.error("Failed to insert modeling data into the database.")
         return
 
-    # Consolidated summary for well information and data for modeling
+    # Consolidated summary for data for modeling
     st.subheader("Database Operation Summary")
-    st.write(f"Records updated or added: {len(consolidated_output)}")
+    st.write(f"Records updated or added: {len(modeling_data_summary)}")
 
-    # Extract data_ids for each stage
-    data_ids = summary  # Assuming the summary is a list of dictionaries
+    # Display summary of inserted modeling data
+    st.dataframe(pd.DataFrame(modeling_data_summary), use_container_width=True, hide_index=True)
+
     arrays_summary = []
 
     # Initialize the progress bar for the insertion process
@@ -286,7 +347,7 @@ def save_data_in_db(well_details, consolidated_output, user_id):
     progress_text = st.empty()
 
     # Process and insert arrays data for each stage
-    for i, item in enumerate(data_ids):
+    for i, item in enumerate(modeling_data_summary):
         stage = item['stage']
         data_id = item['data_id']
 
@@ -301,7 +362,7 @@ def save_data_in_db(well_details, consolidated_output, user_id):
             arrays_data_filtered = arrays_data.loc[:last_non_zero_index].reset_index(drop=True)
 
             # Update the progress bar
-            progress_bar.progress((i + 1) / len(data_ids))
+            progress_bar.progress((i + 1) / len(modeling_data_summary))
             progress_text.text(f"Inserting arrays data for stage {stage}")
 
             # Convert the filtered DataFrame to a list of dictionaries
@@ -320,7 +381,7 @@ def save_data_in_db(well_details, consolidated_output, user_id):
     st.subheader("Arrays Data Insertion Summary")
     if arrays_summary:
         summary_df = pd.DataFrame(arrays_summary)
-        st.dataframe(summary_df, use_container_width=True,hide_index=True)
+        st.dataframe(summary_df, use_container_width=True, hide_index=True)
     else:
         st.write("No data inserted.")
 
