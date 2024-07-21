@@ -26,6 +26,7 @@ import modules.data_prep as data_prep
 import modules.dashboard as dashboard
 import modules.admin_console as admin_console
 import modules.model_explorer as model_explorer
+import modules.realtime_analytics as realtime_analytics  # Import the new module
 from static.styles import load_css, set_page_container_style, display_header
 
 # Set up logging
@@ -156,8 +157,8 @@ def navigation():
     with st.sidebar:
         st.markdown('<h1 style="text-align: center;">Navigation</h1>', unsafe_allow_html=True)
 
-        nav_options = ["GA Optimizer", "Data Preparation", "Dashboard", "Model Explorer"]  
-        icons = ["diagram-3", "database-fill-check", "file-bar-graph", "search"]  
+        nav_options = ["GA Optimizer", "Data Preparation", "Dashboard", "Model Explorer", "Real-time Analytics"]  # Added new option
+        icons = ["diagram-3", "database-fill-check", "file-bar-graph", "search", "graph-up"]  # Added new icon
         
         if st.session_state['is_admin']:
             nav_options.append("Admin Console")
@@ -210,13 +211,16 @@ def navigation():
                 data_prep.main(st.session_state["authentication_status"])
             elif nav_choice == "Dashboard" and check_user_access("Dashboard"):
                 dashboard.main(st.session_state["authentication_status"])
-            elif nav_choice == "Model Explorer" and check_user_access("Model Explorer"):  # Add this condition
+            elif nav_choice == "Model Explorer" and check_user_access("Model Explorer"):
                 model_explorer.main(st.session_state["authentication_status"])
+            elif nav_choice == "Real-time Analytics" and check_user_access("Real-time Analytics"):  # Add this condition
+                realtime_analytics.main(st.session_state["authentication_status"])
             elif nav_choice == "Admin Console" and st.session_state['is_admin']:
                 admin_console.main(st.session_state["authentication_status"])
     except Exception as e:
         log_message(logging.ERROR, f"Error in navigation: {str(e)}", exc_info=True)
         st.error("An unexpected error occurred. Please try refreshing the page or contact support if the issue persists.")
+
         
 
 def clear_ga_optimizer_state():

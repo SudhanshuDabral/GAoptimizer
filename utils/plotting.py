@@ -1,7 +1,32 @@
 import plotly.graph_objects as go
 import streamlit as st
 import plotly.express as px
+from plotly.subplots import make_subplots
+from logging.handlers import RotatingFileHandler
+import logging
+import os
+import numpy as np
+import pandas as pd
 
+
+# Set up logging
+log_dir = 'logs'
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+
+log_file = os.path.join(log_dir, 'app_logs.log')
+
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=logging.DEBUG,
+                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                        handlers=[
+                            RotatingFileHandler(log_file, maxBytes=10485760, backupCount=5),
+                        ])
+
+logger = logging.getLogger(__name__)
+
+def log_message(level, message):
+    logger.log(level, f"[plotting] {message}")
 
 r2_values = []
 iterations = []
@@ -276,3 +301,117 @@ def create_influence_chart(influence_df):
     )
     
     return fig
+
+
+def create_multi_axis_plot(df, title, event_windows, leakoff_periods):
+    try:
+        log_message(logging.INFO, f"Starting to create plot for {title}")
+        
+        # Create figure with multiple y-axes
+        fig = make_subplots(rows=1, cols=1)
+        log_message(logging.INFO, "Created subplot")
+
+        # Define colors for each trace
+        colors = {
+            'Treating Pressure': 'rgb(255, 99, 71)',
+            'Slurry Rate': 'rgb(255, 70, 51)',
+            'BH Prop Mass': 'rgb(162, 28, 141)',
+            'PPC': 'rgb(60, 179, 113)'
+        }
+
+        # Set a fixed number of ticks for all axes
+        num_ticks = 6
+
+        # Add traces
+        for i, (column, color) in enumerate(colors.items()):
+            fig.add_trace(
+                go.Scatter(
+                    x=df['Time Seconds'], 
+                    y=df[column], 
+                    name=column, 
+                    line=dict(color=color),
+                    yaxis=f'y{i+1}'
+                )
+            )
+            log_message(logging.INFO, f"Added trace for {column}")
+
+        # Highlight event windows
+        log_message(logging.INFO, f"Starting to add {len(event_windows)} event windows")
+        for i, (start, end) in enumerate(event_windows):
+            fig.add_vrect(
+                x0=start, x1=end,
+                fillcolor="red", opacity=0.2,
+                layer="below", line_width=0,
+            )
+            if i % 100 == 0:
+                log_message(logging.INFO, f"Added {i+1}/{len(event_windows)} event windows")
+        log_message(logging.INFO, "Finished adding event windows")
+
+        # Add horizontal bars for leakoff periods
+        log_message(logging.INFO, f"Starting to add {len(leakoff_periods)} leakoff periods")
+        for i, (start, end) in enumerate(leakoff_periods):
+            fig.add_shape(
+                type="rect",
+                x0=start, x1=end,
+                y0=0, y1=1,
+                yref="paper",
+                fillcolor="lightblue", opacity=0.3,
+                layer="below", line_width=0,
+            )
+            if i % 100 == 0:
+                log_message(logging.INFO, f"Added {i+1}/{len(leakoff_periods)} leakoff periods")
+        log_message(logging.INFO, "Finished adding leakoff periods")
+
+        # Ensure 'Time Seconds' is numeric
+        df['Time Seconds'] = pd.to_numeric(df['Time Seconds'], errors='coerce')
+
+        # Update layout
+        fig.update_layout(
+            title=title,
+            showlegend=False,
+            margin=dict(l=50, r=150, t=50, b=50),
+            xaxis=dict(
+                domain=[0, 0.8],
+                showgrid=True,
+                gridcolor='rgba(211, 211, 211, 0.1)',
+                griddash='dash',
+                title_text="Time (seconds)"
+            ),
+            height=600,
+        )
+        log_message(logging.INFO, "Updated layout")
+
+        # Update y-axes
+        for i, (column, color) in enumerate(colors.items()):
+            min_val = df[column].min()
+            max_val = df[column].max()
+            
+            fig.update_layout(**{
+                f'yaxis{i+1 if i > 0 else ""}': dict(
+                    title_text=column,
+                    titlefont=dict(color=color),
+                    tickfont=dict(color=color),
+                    tickmode='array',
+                    tickvals=np.linspace(min_val, max_val, num_ticks),
+                    tickformat='.6f',
+                    anchor="free",
+                    overlaying="y" if i > 0 else None,
+                    side="right",
+                    position=1 - (i * 0.05),
+                    showgrid=True,
+                    gridcolor='rgba(211, 211, 211, 0.1)',
+                    griddash='dash',
+                    zeroline=False,
+                    showline=True,
+                    linecolor=color,
+                    linewidth=2,
+                    range=[min_val, max_val]
+                )
+            })
+            log_message(logging.INFO, f"Updated y-axis for {column}")
+
+        log_message(logging.INFO, f"Successfully created multi-axis plot for {title}")
+        return fig
+    except Exception as e:
+        log_message(logging.ERROR, f"Error creating multi-axis plot: {str(e)}")
+        raise
