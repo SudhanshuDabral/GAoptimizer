@@ -415,3 +415,53 @@ def create_multi_axis_plot(df, title, event_windows, leakoff_periods):
     except Exception as e:
         log_message(logging.ERROR, f"Error creating multi-axis plot: {str(e)}")
         raise
+
+def plot_rolling_ir(combined_data, well_name):
+    """
+    Create a plot of rolling IR for multiple stages with different colors.
+    
+    Args:
+    combined_data (pd.DataFrame): DataFrame containing 'normalized_time', 'rolling_IR', and 'stage' columns
+    well_name (str): Name of the well for the plot title
+    
+    Returns:
+    plotly.graph_objects.Figure: A Plotly figure object
+    """
+    # Get unique stages
+    stages = combined_data['stage'].unique()
+    
+    # Create a color scale
+    colors = px.colors.qualitative.Plotly[:len(stages)]
+    
+    # Create subplot
+    fig = make_subplots(rows=1, cols=1, shared_xaxes=True)
+    
+    # Add traces for each stage with different colors
+    for i, stage in enumerate(stages):
+        stage_data = combined_data[combined_data['stage'] == stage]
+        fig.add_trace(
+            go.Scatter(
+                x=stage_data['normalized_time'],
+                y=stage_data['rolling_IR'],
+                mode='lines',
+                name=f'Stage {stage}',
+                line=dict(color=colors[i])
+            )
+        )
+    
+    # Update layout
+    fig.update_layout(
+        title=f"Rolling IR for {well_name}",
+        xaxis_title="Time (seconds from start of stage)",
+        yaxis_title="Rolling IR",
+        legend_title="Stages",
+        hovermode="x unified"
+    )
+    
+    # Update x-axis range to ensure it only shows up to 600 seconds
+    fig.update_xaxes(range=[0, 600])
+    
+    # Update y-axis to scientific notation
+    fig.update_yaxes(exponentformat='e', showexponent='all')
+    
+    return fig
