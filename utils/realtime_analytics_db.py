@@ -1,4 +1,5 @@
 import os
+import psycopg2
 from psycopg2.extras import RealDictCursor
 import logging
 from logging.handlers import RotatingFileHandler
@@ -83,4 +84,24 @@ def get_well_completion_data(well_id, stage):
         return data
     except Exception as error:
         log_message(logging.ERROR, f"Error fetching completion data for well_id {well_id}, stage {stage}: {str(error)}")
+        return []
+    
+def fetch_data_for_modeling(well_id):
+    log_message(logging.INFO, f"Fetching data for modeling for well_id: {well_id}")
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT stage, tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, total_slurry_dp, median_slurry
+            FROM data_for_modeling
+            WHERE well_id = %s
+            ORDER BY stage
+                """, (well_id,))
+        data = cur.fetchall()
+        cur.close()
+        conn.close()
+        log_message(logging.INFO, f"Fetched {len(data)} records for well_id: {well_id}")
+        return data
+    except Exception as error:
+        log_message(logging.ERROR, f"Error fetching data for modeling for well_id {well_id}: {str(error)}")
         return []

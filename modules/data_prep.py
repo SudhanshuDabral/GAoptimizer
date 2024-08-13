@@ -129,7 +129,7 @@ def main(authentication_status):
                             "TVD (ft)": tvd,
                             "Reservoir Pressure": reservoir_pressure
                         }
-                        st.experimental_rerun()
+                        st.rerun()
                     else:
                         st.error("Failed to create new well. Please try again.")
 
@@ -159,11 +159,23 @@ def main(authentication_status):
                 save_data_in_db(st.session_state.data_prep['well_id'], st.session_state.data_prep['consolidated_output'], st.session_state['user_id'])
 
 def extract_stage(filename):
+    # Method 1: Current method (looking for _number.csv)
     match = re.search(r'_(\d+)\.csv', filename)
     if match:
         return int(match.group(1))
-    else:
-        return filename
+    
+    # Method 2: New method (looking for _stage_number)
+    match = re.search(r'_stage_(\d+)', filename)
+    if match:
+        return int(match.group(1))
+    
+    # Method 3: Fallback method (looking for any number after an underscore)
+    match = re.search(r'_(\d+)', filename)
+    if match:
+        return int(match.group(1))
+    
+    # If no method works, return None
+    return None
 
 def process_files(files, well_details):
     all_results = pd.DataFrame()
@@ -285,9 +297,9 @@ def process_files(files, well_details):
         output_array_file_path = os.path.join(user_dir, f'{stage}_arrays.csv')
         result_arrays_df.to_csv(output_array_file_path, index=False)
 
-        Y = np.sum(count == 1)
-        fracdecP = Y / C
-        SumCTemp = np.sum(count)
+        # Y = np.sum(count == 1) #use to find the total number of analysis window. 
+        # fracdecP = Y / C
+        # SumCTemp = np.sum(count)
 
         TotalPres = np.sum(PmaxminWin)
         TotalSlurryDP = np.sum(SlrWin)
@@ -302,6 +314,7 @@ def process_files(files, well_details):
 
         file_results = [TotalPres, MedDHProp, MedianDP, DHPPM, TotDHPPM, TotalSlurryDP, MedianSlry, stage]
         all_results = pd.concat([all_results, pd.DataFrame([file_results], columns=['TEE', 'MedianDHPM', 'MedianDP', 'DownholePPM', 'TotalDHPPM', 'TotalSlurryDP', 'MedianSlurry', 'Stages'])])
+
 
     # Sort the consolidated results by the "Stages" column
     all_results = all_results.sort_values(by='Stages', ascending=True)

@@ -3,10 +3,13 @@ import pandas as pd
 import numpy as np
 from utils.plotting import create_multi_axis_plot, plot_rolling_ir  # Assume plot_rolling_ir is implemented in utils/plotting.py
 import logging
-from utils.realtime_analytics_db import get_wells, get_stages_for_well, get_well_completion_data
+from utils.realtime_analytics_db import get_wells, get_stages_for_well, get_well_completion_data, fetch_data_for_modeling
+from utils.ga_utils import calculate_df_statistics
+from utils.db import fetch_all_models_with_users, fetch_model_details
 from logging.handlers import RotatingFileHandler
 import os
-from realtime_analytics.analysis_utils import analyze_data
+import traceback
+from realtime_analytics.analysis_utils import analyze_data, calculate_rolling_ir, export_to_excel
 
 log_dir = 'logs'
 if not os.path.exists(log_dir):
@@ -26,170 +29,182 @@ logger = logging.getLogger(__name__)
 def log_message(level, message):
     logger.log(level,f"[realtime-analytics] {message}")
 
-def window_analysis(well_name, well_id, selected_stage):
-    st.subheader("Window Analysis Settings")
-    window_size = st.slider("Select window size (seconds)", min_value=11, max_value=31, value=20, step=1)
-    
-    if st.button("Start Window Analysis"):
-        # Fetch well completion data
-        completion_data = get_well_completion_data(well_id, selected_stage)
-        
-        if not completion_data:
-            st.warning("No data available for the selected well and stage.")
-            return
-        
-        # Convert to DataFrame
-        df = pd.DataFrame(completion_data)
-        df['datetime'] = pd.to_datetime(df['epoch'], unit='ms')
-        
-        # Rename columns to match the expected format
-        df = df.rename(columns={
-            'treating_pressure': 'Treating Pressure',
-            'slurry_rate': 'Slurry Rate',
-            'bottomhole_prop_mass': 'BH Prop Mass'
-        })
-        
-        # Add PPC column (you might need to adjust this calculation based on your data)
-        df['PPC'] = df['Treating Pressure'] / df['Slurry Rate']
-        
-        plot_title = f"{well_name} - Stage {selected_stage}"
-        
-        st.subheader(plot_title)
-        total_windows, event_count, total_ppc_change, event_windows, leakoff_periods, new_analysis_results = analyze_data(df, window_size)
-        
-        log_message(logging.INFO, f"Creating plot for {plot_title}")
-        try:
-            fig = create_multi_axis_plot(df, plot_title, event_windows, leakoff_periods)
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            log_message(logging.ERROR, f"Error creating plot for {plot_title}: {str(e)}")
-            st.error(f"Error creating plot for {plot_title}. Please check the logs for more information.")
-        
-        # Display analysis results
-        st.subheader("Analysis Results")
-        analysis_results = {
-            "Well Name": well_name,
-            "Stage": selected_stage,
-            "Total Windows": total_windows,
-            "Event Windows": event_count,
-            "Total PPC Change": total_ppc_change,
-            "Average PPC Change": total_ppc_change / event_count if event_count > 0 else 0
-        }
-        st.table(pd.DataFrame([analysis_results]))
-        
-        # Display detailed window analysis results
-        st.subheader("Detailed Window Analysis Results")
-        new_results_df = pd.DataFrame(new_analysis_results)
-        st.dataframe(new_results_df, use_container_width=True, hide_index=True)
-        
-        log_message(logging.INFO, f"Analysis completed for {well_name} - Stage {selected_stage}")
-
-def calculate_rolling_ir(df, stage):
-    log_message(logging.INFO, f"Starting rolling IR calculation for stage {stage}")
-    log_message(logging.INFO, f"DataFrame shape: {df.shape}")
-    log_message(logging.INFO, f"Columns: {df.columns}")
-    
-    # Check if required columns exist
-    required_columns = ['time_seconds', 'slurry_rate', 'treating_pressure']
-    for col in required_columns:
-        if col not in df.columns:
-            log_message(logging.ERROR, f"Required column '{col}' not found in DataFrame for stage {stage}")
-            return pd.DataFrame(columns=['time_seconds', 'rolling_IR'])
-
-    # Filter data for the first 10 minutes (600 seconds)
-    start_time = df['time_seconds'].min()
-    df_filtered = df[(df['time_seconds'] >= start_time) & (df['time_seconds'] <= start_time + 600)]
-    
-    # Find the index where slurry_rate first exceeds 5 within the first 10 minutes
-    start_indices = df_filtered[df_filtered['slurry_rate'] > 5].index
-    log_message(logging.INFO, f"Number of indices where slurry_rate > 5 in first 10 minutes: {len(start_indices)}")
-    
-    if len(start_indices) == 0:
-        log_message(logging.WARNING, f"No data points where slurry_rate > 5 in first 10 minutes for stage {stage}")
-        return pd.DataFrame(columns=['time_seconds', 'rolling_IR'])
-    
-    start_index = start_indices[0]
-    log_message(logging.INFO, f"Start index: {start_index}")
-    
-    # Calculate cumulative sums from the start_index
-    df_filtered['cum_slurry_rate'] = df_filtered.loc[start_index:, 'slurry_rate'].cumsum()
-    df_filtered['cum_treating_pressure'] = df_filtered.loc[start_index:, 'treating_pressure'].cumsum()
-    
-    # Calculate rolling_IR (slope)
-    df_filtered['rolling_IR'] = df_filtered['cum_slurry_rate'] / df_filtered['cum_treating_pressure']
-    
-    # Normalize time_seconds to start from 0 for each stage
-    df_filtered['normalized_time'] = df_filtered['time_seconds'] - df_filtered['time_seconds'].min()
-    
-    log_message(logging.INFO, f"Filtered DataFrame shape: {df_filtered.shape}")
-    
-    return df_filtered[['normalized_time', 'rolling_IR']]
 
 def identify_depletion_region(well_name, well_id, selected_stages):
     st.subheader("Depletion Region Identification")
     
-    all_stage_data = []
-    
     progress_bar = st.progress(0)
     status_text = st.empty()
+    plot_placeholder = st.empty()
+    debug_placeholder = st.empty()
+
+    all_stage_data = []
+    total_stages = len(selected_stages)
+    
+    log_message(logging.INFO, f"Starting depletion region identification for {well_name} with {total_stages} stages")
 
     for i, stage in enumerate(selected_stages):
-        status_text.text(f"Processing stage {stage}...")
+        status_text.text(f"Processing stage {stage} ({i+1}/{total_stages})")
         try:
+            log_message(logging.INFO, f"Fetching data for {well_name}, Stage {stage}")
             completion_data = get_well_completion_data(well_id, stage)
             
             if not completion_data:
+                log_message(logging.WARNING, f"No data available for {well_name}, Stage {stage}")
                 st.warning(f"No data available for {well_name}, Stage {stage}.")
                 continue
             
             df = pd.DataFrame(completion_data)
             df = df.sort_values('time_seconds')
             
+            log_message(logging.INFO, f"Calculating rolling IR for {well_name}, Stage {stage}")
             rolling_ir_data = calculate_rolling_ir(df, stage)
             
             if rolling_ir_data.empty:
+                log_message(logging.WARNING, f"No valid data for rolling IR calculation in {well_name}, Stage {stage}")
                 st.warning(f"No valid data for rolling IR calculation in {well_name}, Stage {stage}.")
                 continue
             
             rolling_ir_data['stage'] = stage
             all_stage_data.append(rolling_ir_data)
+            
+            # Debug information
+            debug_info = f"Processed Stage {stage}: {len(rolling_ir_data)} data points"
+            log_message(logging.INFO, debug_info)
+            debug_placeholder.text(debug_info)
+            
         except Exception as e:
-            st.error(f"Error processing {well_name}, Stage {stage}: {str(e)}")
-            log_message(logging.ERROR, f"Error processing {well_name}, Stage {stage}: {str(e)}")
-        finally:
-            progress_bar.progress((i + 1) / len(selected_stages))
+            error_msg = f"Error processing {well_name}, Stage {stage}: {str(e)}"
+            log_message(logging.ERROR, error_msg)
+            log_message(logging.ERROR, f"Traceback: {traceback.format_exc()}")
+            st.error(error_msg)
+        
+        # Update progress
+        progress_bar.progress((i + 1) / total_stages)
+        
+        # Plot every 5 stages or on the last stage
+        if (i + 1) % 5 == 0 or i == total_stages - 1:
+            status_text.text(f"Plotting stages 1-{i+1}...")
+            try:
+                combined_data = pd.concat(all_stage_data, ignore_index=True)
+                log_message(logging.INFO, f"Plotting {len(all_stage_data)} stages, total data points: {len(combined_data)}")
+                fig = plot_rolling_ir(combined_data, well_name)
+                plot_placeholder.plotly_chart(fig, use_container_width=True)
+            except Exception as plot_error:
+                error_msg = f"Error plotting stages 1-{i+1}: {str(plot_error)}"
+                log_message(logging.ERROR, error_msg)
+                log_message(logging.ERROR, f"Traceback: {traceback.format_exc()}")
+                st.error(error_msg)
 
     status_text.text("Processing complete!")
 
     if all_stage_data:
-        combined_data = pd.concat(all_stage_data)
+        combined_data = pd.concat(all_stage_data, ignore_index=True)
+        st.write(f"Total data points: {len(combined_data)}")
+        st.write(f"Unique stages: {combined_data['stage'].nunique()}")
+        log_message(logging.INFO, f"Final plot: {combined_data['stage'].nunique()} stages, {len(combined_data)} data points")
         
-        # Print combined data
-        st.subheader("Combined Data Preview")
-        st.write("First few rows of the combined data:")
-        st.write(combined_data.head())
-        
-        st.write("Data shape:", combined_data.shape)
-        st.write("Columns:", combined_data.columns.tolist())
-        
-        st.write("Summary statistics:")
-        st.write(combined_data.describe())
-        
-        st.write("Data types:")
-        st.write(combined_data.dtypes)
-        
-        # Log the entire combined data for debugging
-        log_message(logging.DEBUG, f"Combined data:\n{combined_data.to_string()}")
-        
-        fig = plot_rolling_ir(combined_data, well_name)
-        st.plotly_chart(fig, use_container_width=True)
+        try:
+            fig = plot_rolling_ir(combined_data, well_name)
+            plot_placeholder.plotly_chart(fig, use_container_width=True, height=fig.layout.height)
+            
+            # Calculate descriptive statistics per stage
+            stats_df = combined_data.groupby('stage')['rolling_IR'].agg([
+                'count', 'mean', 'median', 'std', 'min', 'max',
+                lambda x: x.quantile(0.25),
+                lambda x: x.quantile(0.75)
+            ]).reset_index()
+            stats_df.columns = ['Stage', 'Count', 'Mean', 'Median', 'Std Dev', 'Min', 'Max', '25th Percentile', '75th Percentile']
+            
+            # Display the statistics table
+            st.subheader("Descriptive Statistics of Rolling IR by Stage")
+            st.dataframe(stats_df.style.format({
+                'Mean': '{:.5f}',
+                'Median': '{:.5f}',
+                'Std Dev': '{:.5f}',
+                'Min': '{:.5f}',
+                'Max': '{:.5f}',
+                '25th Percentile': '{:.5f}',
+                '75th Percentile': '{:.5f}'
+            }), hide_index=True, use_container_width=True)
+            
+            # Create Excel file
+            excel_file = export_to_excel(combined_data, well_name)
+            
+            # Provide download button
+            st.download_button(
+                label="Download Rolling IR Data (Excel)",
+                data=excel_file,
+                file_name=f"{well_name}_rolling_ir_data.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        except Exception as final_plot_error:
+            error_msg = f"Error creating final plot, statistics table, or Excel file: {str(final_plot_error)}"
+            log_message(logging.ERROR, error_msg)
+            log_message(logging.ERROR, f"Traceback: {traceback.format_exc()}")
+            st.error(error_msg)
     else:
+        log_message(logging.WARNING, "No valid data available for the selected stages")
         st.warning("No valid data available for the selected stages.")
 
+def display_model_details(model_details):
+    # Create two columns
+    col1, col2 = st.columns(2)
 
-def test_saved_models(well_name, well_id, selected_stages):
-    st.info("Test Saved Models functionality will be implemented here.")
-    st.write(f"This feature will allow you to test and evaluate saved models on well data for {well_name}, Stages {', '.join(map(str, selected_stages))}.")
+    with col1:
+        st.metric("Weighted R2 Score", f"{model_details.get('weighted_r2_score', 'N/A'):.4f}")
+    
+    with col2:
+        st.metric("Full Dataset R2 Score", f"{model_details.get('full_dataset_r2_score', 'N/A'):.4f}")
+
+    st.write("**Model Equation:**")
+    st.code(model_details.get('equation', 'Equation not available'), language="python")
+
+    st.write("**Predictors:**")
+    predictors = model_details.get('predictors', [])
+    predictor_html = " ".join([f'<span style="background-color: #007bff; color: white; padding: 2px 6px; margin: 2px; border-radius: 10px;">{pred}</span>' for pred in predictors])
+    st.markdown(predictor_html, unsafe_allow_html=True)
+
+    st.write("**Selected Features:**")
+    features = model_details.get('selected_feature_names', [])
+    feature_html = " ".join([f'<span style="background-color: #28a745; color: white; padding: 2px 6px; margin: 2px; border-radius: 10px;">{feat}</span>' for feat in features])
+    st.markdown(feature_html, unsafe_allow_html=True)
+
+def test_saved_models(well_name, well_id, selected_stage):
+    st.subheader("Test Saved Models")
+
+    # Fetch all saved models
+    saved_models = fetch_all_models_with_users()
+
+    if not saved_models:
+        st.warning("No saved models found. Please create and save a model first.")
+        return
+
+    # Create a selectbox for model selection
+    model_options = [f"{model['model_name']} (created on {model['created_on']})" for model in saved_models]
+    selected_model_option = st.selectbox("Select a model", options=model_options)
+
+    if selected_model_option:
+        # Extract model_id from the selected option
+        selected_model = next((model for model in saved_models if f"{model['model_name']} (created on {model['created_on']})" == selected_model_option), None)
+        
+        if selected_model:
+            # Fetch model details
+            model_details = fetch_model_details(selected_model['model_id'])
+
+            if model_details:
+                st.write(f"**Created by:** {selected_model['created_by']}")
+                
+                # Display basic model details
+                display_model_details(model_details)
+
+                # Fetch data for modeling and calculate statistics
+                data_for_modeling = pd.DataFrame(fetch_data_for_modeling(well_id))
+                df_statistics = calculate_df_statistics(data_for_modeling)
+                
+                st.subheader("Well Statistics")
+                st.dataframe(pd.DataFrame(df_statistics))
+
 
 def main(authentication_status):
     if not authentication_status:
@@ -217,31 +232,37 @@ def main(authentication_status):
         
         with col2:
             stages = get_stages_for_well(well_id)
-            selected_stages = st.multiselect(
-                "Select Stage(s)",
-                options=stages,
-                default=[stages[0]] if stages else [],
-                help="Choose one or more stages of the well you want to analyze."
-            )
-        
+            
         # Operation selection
         operation = st.selectbox(
             "Select Operation",
-            ["Window Analysis", "Identify Depletion Region", "Test Saved Models"],
+            ["Select an operation", "Identify Depletion Region", "Test Saved Models"],
+            index=0,
             help="Choose the type of analysis or operation you want to perform."
         )
         
         # Perform the selected operation
-        if operation == "Window Analysis":
-            if len(selected_stages) == 1:
-                window_analysis(selected_well, well_id, selected_stages[0])
-            else:
-                st.warning("Please select a single stage for Window Analysis.")
-        elif operation == "Identify Depletion Region":
+        if operation == "Identify Depletion Region":
+            selected_stages = st.multiselect(
+                "Select Stages",
+                options=stages,
+                default=stages,
+                help="Choose one or more stages to analyze. You can select multiple stages."
+            )
             if st.button("Start Depletion Region Identification"):
-                identify_depletion_region(selected_well, well_id, selected_stages)
+                if selected_stages:
+                    identify_depletion_region(selected_well, well_id, selected_stages)
+                else:
+                    st.warning("Please select at least one stage before starting the identification process.")
         elif operation == "Test Saved Models":
-            test_saved_models(selected_well, well_id, selected_stages)
+            selected_stage = st.selectbox(
+                "Select Stage",
+                options=stages,
+                help="Choose the stage of the well you want to analyze."
+            )
+            test_saved_models(selected_well, well_id, selected_stage)
+        elif operation == "Select an operation":
+            st.info("Please select an operation to proceed.")
     
     except Exception as e:
         log_message(logging.ERROR, f"Unhandled error in main function: {str(e)}")

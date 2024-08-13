@@ -1,3 +1,4 @@
+import traceback
 import plotly.graph_objects as go
 import streamlit as st
 import plotly.express as px
@@ -7,6 +8,7 @@ import logging
 import os
 import numpy as np
 import pandas as pd
+from itertools import cycle
 
 
 # Set up logging
@@ -416,52 +418,64 @@ def create_multi_axis_plot(df, title, event_windows, leakoff_periods):
         log_message(logging.ERROR, f"Error creating multi-axis plot: {str(e)}")
         raise
 
+import colorsys
+
+def generate_distinct_colors(n):
+    HSV_tuples = [(x * 1.0 / n, 0.8, 0.9) for x in range(n)]
+    return list(map(lambda x: f'rgb{tuple(int(i * 255) for i in colorsys.hsv_to_rgb(*x))}', HSV_tuples))
+
 def plot_rolling_ir(combined_data, well_name):
-    """
-    Create a plot of rolling IR for multiple stages with different colors.
-    
-    Args:
-    combined_data (pd.DataFrame): DataFrame containing 'normalized_time', 'rolling_IR', and 'stage' columns
-    well_name (str): Name of the well for the plot title
-    
-    Returns:
-    plotly.graph_objects.Figure: A Plotly figure object
-    """
-    # Get unique stages
-    stages = combined_data['stage'].unique()
-    
-    # Create a color scale
-    colors = px.colors.qualitative.Plotly[:len(stages)]
-    
-    # Create subplot
-    fig = make_subplots(rows=1, cols=1, shared_xaxes=True)
-    
-    # Add traces for each stage with different colors
-    for i, stage in enumerate(stages):
-        stage_data = combined_data[combined_data['stage'] == stage]
-        fig.add_trace(
-            go.Scatter(
+    try:
+        fig = go.Figure()
+        
+        unique_stages = combined_data['stage'].unique()
+        num_stages = len(unique_stages)
+        logging.info(f"Plotting {num_stages} stages for {well_name}")
+        
+        # Generate distinct colors for all stages
+        colors = generate_distinct_colors(num_stages)
+
+        for i, stage in enumerate(unique_stages):
+            stage_data = combined_data[combined_data['stage'] == stage]
+            logging.info(f"Stage {stage}: {len(stage_data)} data points")
+            fig.add_trace(go.Scatter(
                 x=stage_data['normalized_time'],
                 y=stage_data['rolling_IR'],
                 mode='lines',
                 name=f'Stage {stage}',
-                line=dict(color=colors[i])
-            )
+                line=dict(color=colors[i], width=2),
+                legendgroup=f'group{i}',
+                showlegend=True
+            ))
+        
+        # Calculate a suitable height for the plot
+        plot_height = max(600, 400 + (num_stages * 20))  # Base height + extra height for each stage
+
+        fig.update_layout(
+            title=f'Rolling IR for {well_name} ({num_stages} stages)',
+            xaxis_title='Time (seconds)',
+            yaxis_title='Rolling IR',
+            xaxis_range=[0, 900],
+            legend_title="Stages",
+            hovermode="x unified",
+            height=plot_height,  # Set the calculated height
+            legend=dict(
+                itemsizing='constant',
+                font=dict(size=10),
+                yanchor="top",
+                y=0.99,
+                xanchor="left",
+                x=1.02,
+                bgcolor="rgba(255,255,255,0.5)",  # Semi-transparent background
+                bordercolor="rgba(0,0,0,0.2)",
+                borderwidth=1
+            ),
+            margin=dict(r=150)  # Increase right margin to accommodate legend
         )
-    
-    # Update layout
-    fig.update_layout(
-        title=f"Rolling IR for {well_name}",
-        xaxis_title="Time (seconds from start of stage)",
-        yaxis_title="Rolling IR",
-        legend_title="Stages",
-        hovermode="x unified"
-    )
-    
-    # Update x-axis range to ensure it only shows up to 600 seconds
-    fig.update_xaxes(range=[0, 600])
-    
-    # Update y-axis to scientific notation
-    fig.update_yaxes(exponentformat='e', showexponent='all')
-    
-    return fig
+        fig.update_yaxes(exponentformat='e', showexponent='all')
+        
+        return fig
+    except Exception as e:
+        logging.error(f"Error in plot_rolling_ir: {str(e)}")
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        raise

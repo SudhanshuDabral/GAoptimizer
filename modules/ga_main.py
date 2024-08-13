@@ -172,6 +172,14 @@ def ga_optimization_section():
                 st.session_state.ga_optimizer['edited_df'] = edited_df
                 st.session_state.ga_optimizer['df_statistics'] = calculate_df_statistics(edited_df)
 
+                 # Add download button for data preview
+                st.download_button(
+                    label="Download Data Preview",
+                    data=edited_df.to_csv(index=False).encode('utf-8'),
+                    file_name="data_preview.csv",
+                    mime="text/csv",
+                )
+
                 if st.button("Z-Score Data"):
                     if edited_df['Productivity'].isnull().any() or (edited_df['Productivity'] == "").any():
                         st.error("Please ensure all values in the 'Productivity' column are filled.")
@@ -215,6 +223,13 @@ def ga_optimization_section():
                             st.session_state.ga_optimizer['excluded_rows'] = st.session_state.ga_optimizer['zscored_df'].iloc[selected_indices]['data_id'].tolist()
                     else:
                         st.session_state.ga_optimizer['excluded_rows'] = []
+
+                    st.download_button(
+                        label="Download Z-Scored Data",
+                        data=st.session_state.ga_optimizer['zscored_df'].to_csv(index=False).encode('utf-8'),
+                        file_name="zscored_data.csv",
+                        mime="text/csv",
+                    )
                     
                     st.write("Selected rows to exclude from GA optimization:")
                     display_columns = [col for col in selected_rows.columns if col not in ['data_id', 'well_id']]
