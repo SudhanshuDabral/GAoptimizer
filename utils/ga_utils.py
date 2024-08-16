@@ -70,6 +70,9 @@ def calculate_productivity(values, response_equation):
     for attr, value in values.items():
         right_side = right_side.replace(attr, str(value))
     
+    # Replace ^ with ** for exponentiation
+    right_side = right_side.replace('^', '**')
+    
     # Handle squared terms
     right_side = re.sub(r'(\d+(\.\d+)?)\s*\*\s*(\w+)\s*\*\s*(\w+)', r'\1 * (\3 * \4)', right_side)
     
@@ -91,6 +94,11 @@ def calculate_model_sensitivity(response_equation, df_statistics):
     # Calculate baseline productivity using median values
     median_values = {attr: df_statistics[attr]['median'] for attr in attributes}
     baseline_productivity = calculate_productivity(median_values, response_equation)
+    
+    if baseline_productivity is None:
+        print(f"Error: Unable to calculate baseline productivity. Equation: {response_equation}")
+        print(f"Median values: {median_values}")
+        return None, None
      
     sensitivity_data = []
     
@@ -104,6 +112,11 @@ def calculate_model_sensitivity(response_equation, df_statistics):
         max_values = median_values.copy()
         max_values[attr] = df_statistics[attr]['max']
         max_productivity = calculate_productivity(max_values, response_equation)
+        
+        if min_productivity is None or max_productivity is None:
+            print(f"Error calculating sensitivity for attribute {attr}")
+            print(f"Min values: {min_values}")
+            print(f"Max values: {max_values}")
         
         sensitivity_data.append({
             'Attribute': attr,

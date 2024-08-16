@@ -123,6 +123,11 @@ def ga_optimization_section():
                 st.warning("Please select at least one well to proceed.")
                 return
 
+            # Clear previous data when wells selection changes
+            if 'previous_wells' not in st.session_state or st.session_state.previous_wells != selected_wells:
+                st.session_state.ga_optimizer['edited_df'] = None
+                st.session_state.previous_wells = selected_wells
+
             consolidated_data = fetch_consolidated_data(selected_well_ids)
             
             if consolidated_data.empty:
@@ -130,6 +135,7 @@ def ga_optimization_section():
                 return
 
             df = consolidated_data.sort_values(by=['Well Name', 'stage'])
+            
             # Initialize Productivity column if it doesn't exist in session state
             if 'edited_df' not in st.session_state.ga_optimizer or st.session_state.ga_optimizer['edited_df'] is None:
                 df['Productivity'] = ""
@@ -303,14 +309,20 @@ def ga_optimization_section():
 
 def fetch_consolidated_data(well_ids):
     consolidated_data = pd.DataFrame()
-    for well_id in well_ids:
-        data = get_modeling_data(well_id)
-        df = pd.DataFrame(data)
-        if not df.empty:
-            well_name = next(well['well_name'] for well in get_well_details() if well['well_id'] == well_id)
-            df['Well Name'] = well_name
-            consolidated_data = pd.concat([consolidated_data, df], ignore_index=True)
-    return consolidated_data
+    try:
+        for well_id in well_ids:
+            data = get_modeling_data(well_id)
+            df = pd.DataFrame(data)
+            if not df.empty:
+                well_name = next(well['well_name'] for well in get_well_details() if well['well_id'] == well_id)
+                df['Well Name'] = well_name
+                consolidated_data = pd.concat([consolidated_data, df], ignore_index=True)
+            else:
+                log_message(logging.WARNING, f"No data available for well_id: {well_id}")
+        return consolidated_data
+    except Exception as e:
+        log_message(logging.ERROR, f"Error in fetch_consolidated_data: {str(e)}")
+        raise
 
 def display_ga_results():
     with warnings.catch_warnings(record=True) as caught_warnings:
