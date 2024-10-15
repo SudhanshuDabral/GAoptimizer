@@ -62,6 +62,9 @@ def initialize_ga_state():
             'num_generations': 40,
             'population_size': 50,
             'predictors': [],
+            'selected_wells': [],  # Add this line
+            'coef_range': (-10.0, 10.0),  # Add this line
+            'num_models': 3,  # Add this line
         }
 
 def start_ga_optimization_callback():
@@ -116,7 +119,8 @@ def ga_optimization_section():
             wells = get_well_details()
             well_options = {well['well_name']: well['well_id'] for well in wells}
             
-            selected_wells = st.multiselect("Select Wells", options=list(well_options.keys()))
+            selected_wells = st.multiselect("Select Wells", options=list(well_options.keys()), key="ga_well_select")
+            st.session_state.ga_optimizer['selected_wells'] = selected_wells  # Store selected wells
             selected_well_ids = [well_options[well] for well in selected_wells]
             
             if not selected_wells:
@@ -345,8 +349,39 @@ def display_ga_results():
                     features_text = "\n".join([f"• {feature}" for feature in selected_feature_names])
                     st.code(features_text, language="markdown")
                     
+                    # Add dropdown for selecting percentage of top error points
+                    error_percentage = st.selectbox(
+                        "Select percentage of top error points to exclude",
+                        options=[5, 10, 15, 18, 20, 22, 25, 30],
+                        format_func=lambda x: f"{x}%",
+                        key=f"error_percentage_{i}"
+                    )
+
+                    # Button to apply the exclusion
+                    if st.button("Apply Exclusion", key=f"apply_exclusion_{i}"):
+                        # Sort errors_df by absolute error
+                        errors_df['Abs_Error'] = abs(errors_df['Error'])
+                        sorted_errors = errors_df.sort_values('Abs_Error', ascending=False)
+                        
+                        # Calculate number of points to exclude
+                        num_points = int(len(errors_df) * error_percentage / 100)
+                        
+                        # Get data_ids of points to exclude
+                        new_excluded_ids = sorted_errors.head(num_points)['data_id'].tolist()
+                        
+                        # Update excluded_rows
+                        st.session_state.ga_optimizer['excluded_rows'] = list(set(excluded_rows + new_excluded_ids))
+                        
+                        # Update zscored table checkboxes
+                        if 'zscored_df' in st.session_state.ga_optimizer:
+                            st.session_state.ga_optimizer['zscored_df']['excluded'] = st.session_state.ga_optimizer['zscored_df']['data_id'].isin(st.session_state.ga_optimizer['excluded_rows'])
+                        
+                        st.success(f"Added {num_points} points with largest errors to excluded rows.")
+                        st.rerun()
+                    
                     st.write("Error Table for Individual Data Points")
-                    st.dataframe(errors_df, use_container_width=True, hide_index=True)
+                    errors_df_display = errors_df.drop(columns=['data_id', 'well_id'])
+                    st.dataframe(errors_df_display, use_container_width=True, hide_index=True)
 
                     st.write("Actual vs Predicted Productivity Plot")
                     fig = plot_actual_vs_predicted(errors_df)
@@ -588,10 +623,22 @@ def display_monotonicity_results(selected_stages):
                 fig = plot_column(result_df, column, stage)
                 st.plotly_chart(fig, use_container_width=True)
         else:
-            st.subheader("Productivity Plots for Selected Stages")
+            st.subheader("Productivity, Total DHPPM, and Total Slurry DP Plots for Selected Stages")
             for stage, result_df in st.session_state.ga_optimizer['monotonicity_results'].items():
-                fig = plot_column(result_df, 'Productivity', stage)
-                st.plotly_chart(fig, use_container_width=True)
+                # Check if the required columns are present
+                required_columns = ['Productivity', 'total_dhppm_stage', 'total_slurry_dp_stage']
+                missing_columns = [col for col in required_columns if col not in result_df.columns]
+                
+                if missing_columns:
+                    st.warning(f"Stage {stage}: Missing columns: {', '.join(missing_columns)}")
+                    st.write("Available columns:", result_df.columns.tolist())
+                else:
+                    fig = plot_column(result_df, stage)
+                    st.plotly_chart(fig, use_container_width=True)
+
+                # Display the first few rows of the DataFrame for this stage
+                # st.write(f"Preview of data for Stage {stage}:")
+                # st.dataframe(result_df.head())
     else:
         st.info("Run Monotonicity check to see results.")
 

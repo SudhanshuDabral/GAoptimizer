@@ -163,6 +163,8 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
                         y_pred = model.predict(X_sub)
                         errors = (y - y_pred)**2
                         errors_df = pd.DataFrame({
+                            'data_id': df['data_id'],
+                            'well_id': df['well_id'],
                             'WellName': df['Well Name'],
                             'stage': df['stage'],
                             'Actual': y,

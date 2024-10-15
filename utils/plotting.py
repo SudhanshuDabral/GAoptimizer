@@ -76,28 +76,39 @@ def plot_r2_vs_iteration():
                       yaxis_title='R² Value')
 
     st.plotly_chart(fig, use_container_width=True)
-
-def plot_column(df, column_name, stage):
+    
+def plot_column(df, stage):
     """
-    Create a line plot for a specific column in the DataFrame.
+    Create a line plot for Productivity, total_dhppm_stage, and total_slurry_dp_stage.
     
     :param df: pandas DataFrame containing the data
-    :param column_name: str, name of the column to plot
+    :param stage: str or int, the stage number
     :return: plotly Figure object
     """
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=df.index,
-        y=df[column_name],
-        mode='lines+markers',
-        name=column_name
-    ))
-    
+
+    columns_to_plot = ['Productivity', 'total_dhppm_stage', 'total_slurry_dp_stage']
+    colors = ['blue', 'red', 'green']
+
+    for column, color in zip(columns_to_plot, colors):
+        if column in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df.index,
+                y=df[column],
+                mode='lines+markers',
+                name=column,
+                line=dict(color=color)
+            ))
+        else:
+            print(f"Warning: Column '{column}' not found in the DataFrame")
+
     fig.update_layout(
-        title=f'{column_name} for Stage {stage}',
+        title=f'Productivity, Total DHPPM, and Total Slurry DP for Stage {stage}',
         xaxis_title='Index',
-        yaxis_title=column_name,
+        yaxis_title='Value',
         height=500,  # Fixed height for consistency
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        yaxis=dict(range=[-10, 10])  # Set y-axis range from -10 to 10
     )
     
     return fig
