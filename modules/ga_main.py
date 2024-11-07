@@ -319,6 +319,18 @@ def fetch_consolidated_data(well_ids):
             data = get_modeling_data(well_id)
             df = pd.DataFrame(data)
             if not df.empty:
+                # Calculate new columns
+                df['effective_tee'] = df['tee'] / df['total_slurry_dp']
+                df['effective_mediandp'] = df['median_dp'] / df['median_slurry']
+                
+                # Handle potential division by zero or infinity
+                df['effective_tee'] = df['effective_tee'].replace([np.inf, -np.inf], np.nan)
+                df['effective_mediandp'] = df['effective_mediandp'].replace([np.inf, -np.inf], np.nan)
+                
+                # Fill NaN values with 0 or another appropriate value
+                df['effective_tee'] = df['effective_tee'].fillna(0)
+                df['effective_mediandp'] = df['effective_mediandp'].fillna(0)
+                
                 well_name = next(well['well_name'] for well in get_well_details() if well['well_id'] == well_id)
                 df['Well Name'] = well_name
                 consolidated_data = pd.concat([consolidated_data, df], ignore_index=True)
@@ -605,27 +617,10 @@ def run_monotonicity_check(well_id, selected_stages, equation_to_use):
 
 def display_monotonicity_results(selected_stages):
     if st.session_state.ga_optimizer['monotonicity_results']:
-        if len(selected_stages) == 1:
-            stage = selected_stages[0]
-            result_df = st.session_state.ga_optimizer['monotonicity_results'][stage]
-            
-            st.subheader(f"Monotonicity Check Results for Stage {stage}")
-            st.write(f"Total rows: {len(result_df)}")
-            st.dataframe(result_df, use_container_width=True, height=400)
-
-            st.subheader("Plot Monotonicity Results")
-            plot_columns = st.multiselect(
-                "Select columns to plot",
-                options=result_df.columns.tolist(),
-                default=["Productivity"]
-            )
-            for column in plot_columns:
-                fig = plot_column(result_df, column, stage)
-                st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.subheader("Productivity, Total DHPPM, and Total Slurry DP Plots for Selected Stages")
-            for stage, result_df in st.session_state.ga_optimizer['monotonicity_results'].items():
-                # Check if the required columns are present
+        
+        st.subheader("Productivity, Total DHPPM, and Total Slurry DP Plots for Selected Stages")
+        for stage, result_df in st.session_state.ga_optimizer['monotonicity_results'].items():
+            # Check if the required columns are present
                 required_columns = ['Productivity', 'total_dhppm_stage', 'total_slurry_dp_stage']
                 missing_columns = [col for col in required_columns if col not in result_df.columns]
                 

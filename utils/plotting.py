@@ -90,14 +90,15 @@ def plot_column(df, stage):
     columns_to_plot = ['Productivity', 'total_dhppm_stage', 'total_slurry_dp_stage']
     colors = ['blue', 'red', 'green']
 
-    for column, color in zip(columns_to_plot, colors):
+    for i, (column, color) in enumerate(zip(columns_to_plot, colors)):
         if column in df.columns:
             fig.add_trace(go.Scatter(
                 x=df.index,
                 y=df[column],
                 mode='lines+markers',
                 name=column,
-                line=dict(color=color)
+                line=dict(color=color),
+                yaxis='y' if i == 0 else 'y2'
             ))
         else:
             print(f"Warning: Column '{column}' not found in the DataFrame")
@@ -105,10 +106,20 @@ def plot_column(df, stage):
     fig.update_layout(
         title=f'Productivity, Total DHPPM, and Total Slurry DP for Stage {stage}',
         xaxis_title='Index',
-        yaxis_title='Value',
+        yaxis=dict(
+            title='Productivity',
+            titlefont=dict(color="blue"),
+            tickfont=dict(color="blue")
+        ),
+        yaxis2=dict(
+            title='DHPPM / Slurry DP',
+            titlefont=dict(color="red"),
+            tickfont=dict(color="red"),
+            overlaying='y',
+            side='right'
+        ),
         height=500,  # Fixed height for consistency
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        yaxis=dict(range=[-10, 10])  # Set y-axis range from -10 to 10
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     
     return fig

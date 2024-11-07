@@ -31,7 +31,8 @@ def zscore_data(df):
 
 # function to calculate statistics for the original data for modelling used in ga_main.py
 def calculate_df_statistics(df):
-    columns_to_process = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 'total_slurry_dp', 'median_slurry']
+    columns_to_process = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 
+                         'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp']
     stats = {}
     for col in columns_to_process:
         if col in df.columns:
@@ -45,7 +46,8 @@ def calculate_df_statistics(df):
     return stats
 
 def calculate_zscoredf_statistics(df):
-    columns_to_process = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 'total_slurry_dp', 'median_slurry']
+    columns_to_process = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 
+                         'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp']
     stats = {}
     for col in columns_to_process:
         if col in df.columns:
@@ -60,73 +62,125 @@ def calculate_zscoredf_statistics(df):
 
 # function to calculate model sensitivity for the data for modelling used in ga_main.py
 def calculate_productivity(values, response_equation):
-    # Modify the response equation to use 'result' instead of 'Computed_Productivity' or 'Corrected_Prod'
-    modified_equation = response_equation.replace("Computed_Productivity", "result").replace("Corrected_Prod", "result")
-    
-    # Extract the right side of the equation
-    right_side = modified_equation.split('=')[1].strip()
-    
-    # Replace attribute names with their values
-    for attr, value in values.items():
-        right_side = right_side.replace(attr, str(value))
-    
-    # Replace ^ with ** for exponentiation
-    right_side = right_side.replace('^', '**')
-    
-    # Handle squared terms
-    right_side = re.sub(r'(\d+(\.\d+)?)\s*\*\s*(\w+)\s*\*\s*(\w+)', r'\1 * (\3 * \4)', right_side)
-    
-    # Evaluate the expression
     try:
-        result = eval(right_side)
+        # Modify the response equation to use 'result' instead of 'Computed_Productivity' or 'Corrected_Prod'
+        modified_equation = response_equation.replace("Computed_Productivity", "result").replace("Corrected_Prod", "result")
         
-        if np.isclose(result, 0, atol=1e-10):
-            print("Warning: Result is very close to zero. Check if this is expected.")
+        # Extract the right side of the equation
+        right_side = modified_equation.split('=')[1].strip()
         
-        return result
+        # Replace attribute names with their values
+        for attr, value in sorted(values.items(), key=lambda x: len(x[0]), reverse=True):  # Sort by length to handle longer names first
+            right_side = right_side.replace(attr, str(value))
+        
+        # Replace ^ with ** for exponentiation
+        right_side = right_side.replace('^', '**')
+        
+        # Handle squared terms
+        right_side = re.sub(r'(\d+(\.\d+)?)\s*\*\s*(\w+)\s*\*\s*(\w+)', r'\1 * (\3 * \4)', right_side)
+        
+        # Evaluate the expression
+        try:
+            result = eval(right_side)
+            
+            if np.isclose(result, 0, atol=1e-10):
+                print("Warning: Result is very close to zero. Check if this is expected.")
+            
+            return result
+        except Exception as e:
+            print(f"Error in equation evaluation: {str(e)}")
+            return None
+            
     except Exception as e:
-        print(f"Error in equation evaluation: {str(e)}")
+        print(f"Error in calculate_productivity: {str(e)}")
         return None
 
-def calculate_model_sensitivity(response_equation, df_statistics):
-    attributes = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 'total_slurry_dp', 'median_slurry']
-    
-    # Calculate baseline productivity using median values
-    median_values = {attr: df_statistics[attr]['median'] for attr in attributes}
-    baseline_productivity = calculate_productivity(median_values, response_equation)
-    
-    if baseline_productivity is None:
+def calculate_model_sensitivity(response_equation, zscored_statistics):
+    try:
+        # Get median values for all attributes including the new effective columns
+        median_values = {attr: stats['median'] for attr, stats in zscored_statistics.items()}
+        
+        # Ensure effective_tee and effective_mediandp are in median_values
+        if 'effective_tee' not in median_values:
+            print("Warning: effective_tee not found in statistics")
+            # Calculate effective_tee median from other medians
+            if 'tee' in median_values and 'total_slurry_dp' in median_values:
+                median_values['effective_tee'] = median_values['tee'] / median_values['total_slurry_dp']
+            else:
+                median_values['effective_tee'] = 0
+                
+        if 'effective_mediandp' not in median_values:
+            print("Warning: effective_mediandp not found in statistics")
+            # Calculate effective_mediandp median from other medians
+            if 'median_dp' in median_values and 'median_slurry' in median_values:
+                median_values['effective_mediandp'] = median_values['median_dp'] / median_values['median_slurry']
+            else:
+                median_values['effective_mediandp'] = 0
+        
+        # Calculate baseline productivity using median values
+        baseline_productivity = calculate_productivity(median_values, response_equation)
+        
+        if baseline_productivity is None:
+            print(f"Error: Unable to calculate baseline productivity with equation: {response_equation}")
+            return None, None
+            
+        # Initialize sensitivity results
+        sensitivity_results = []
+        
+        # Define the percentage change for sensitivity analysis
+        percent_change = 0.1  # 10% change
+        
+        # List of attributes to analyze
+        attributes = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 
+                     'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp']
+        
+        for attr in attributes:
+            if attr in zscored_statistics:
+                # Get the standard deviation for the attribute
+                std_dev = zscored_statistics[attr]['std']
+                
+                # Calculate the change amount
+                change_amount = std_dev * percent_change
+                
+                # Test increased value
+                test_values_high = median_values.copy()
+                test_values_high[attr] = median_values[attr] + change_amount
+                productivity_high = calculate_productivity(test_values_high, response_equation)
+                
+                # Test decreased value
+                test_values_low = median_values.copy()
+                test_values_low[attr] = median_values[attr] - change_amount
+                productivity_low = calculate_productivity(test_values_low, response_equation)
+                
+                if productivity_high is not None and productivity_low is not None:
+                    # Calculate sensitivity metrics
+                    productivity_change = abs(productivity_high - productivity_low)
+                    percent_impact = (productivity_change / baseline_productivity) * 100 if baseline_productivity != 0 else 0
+                    
+                    sensitivity_results.append({
+                        'Attribute': attr,
+                        'Min Value': median_values[attr] - change_amount,
+                        'Max Value': median_values[attr] + change_amount,
+                        'Min Productivity': min(productivity_low, productivity_high),
+                        'Max Productivity': max(productivity_low, productivity_high),
+                        'Impact': percent_impact
+                    })
+        
+        if not sensitivity_results:
+            print("No valid sensitivity results calculated")
+            return None, None
+            
+        # Convert results to DataFrame and sort by absolute impact
+        sensitivity_df = pd.DataFrame(sensitivity_results)
+        sensitivity_df = sensitivity_df.sort_values('Impact', ascending=False)
+        
+        return baseline_productivity, sensitivity_df
+        
+    except Exception as e:
         print(f"Error: Unable to calculate baseline productivity. Equation: {response_equation}")
         print(f"Median values: {median_values}")
+        print(f"Error in equation evaluation: {str(e)}")
         return None, None
-     
-    sensitivity_data = []
-    
-    for attr in attributes:
-        # Calculate productivity with min value
-        min_values = median_values.copy()
-        min_values[attr] = df_statistics[attr]['min']
-        min_productivity = calculate_productivity(min_values, response_equation)
-        
-        # Calculate productivity with max value
-        max_values = median_values.copy()
-        max_values[attr] = df_statistics[attr]['max']
-        max_productivity = calculate_productivity(max_values, response_equation)
-        
-        if min_productivity is None or max_productivity is None:
-            print(f"Error calculating sensitivity for attribute {attr}")
-            print(f"Min values: {min_values}")
-            print(f"Max values: {max_values}")
-        
-        sensitivity_data.append({
-            'Attribute': attr,
-            'Min Productivity': min_productivity,
-            'Max Productivity': max_productivity
-        })
-    
-    sensitivity_df = pd.DataFrame(sensitivity_data)
-    
-    return baseline_productivity, sensitivity_df
 
 # function for sensitivity test 
 def perform_sensitivity_test(response_equation, attribute, num_points, zscored_statistics):
@@ -168,7 +222,7 @@ def batch_monotonicity_check(stages, well_id, get_array_data_func, df_statistics
 
 # function to validate custom equation for modelling used in ga_main.py
 def validate_custom_equation(equation):
-    valid_features = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 'total_slurry_dp', 'median_slurry']
+    valid_features = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp']
     
     # Check if equation starts with "Corrected_Prod ="
     if not equation.strip().startswith("Corrected_Prod ="):

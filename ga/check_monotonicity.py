@@ -68,6 +68,10 @@ def check_monotonicity(array_data, df_statistics, response_equation):
     df['total_prop_original'] = calculate_cumulative_sum(df['downhole_win_prop'])
     df['total_dhppm_original'] = calculate_ratio(df['total_prop_original'], df['tee_original'])
     
+    # Calculate effective columns
+    df['effective_tee'] = calculate_ratio(df['tee_original'], df['total_slurry_dp_original'])
+    df['effective_mediandp'] = calculate_ratio(df['median_dp_original'], df['median_slurry_original'])
+    
     # Calculate stage values using statistics from df_statistics
     df['tee_stage'] = calculate_stage(df, 'tee_original', df_statistics['tee']['mean'], df_statistics['tee']['std'])
     df['median_dhpm_stage'] = calculate_stage(df, 'median_dhpm_original', df_statistics['median_dhpm']['mean'], df_statistics['median_dhpm']['std'])
