@@ -319,17 +319,19 @@ def fetch_consolidated_data(well_ids):
             data = get_modeling_data(well_id)
             df = pd.DataFrame(data)
             if not df.empty:
-                # Calculate new columns
+                # Calculate all effective columns
                 df['effective_tee'] = df['tee'] / df['total_slurry_dp']
                 df['effective_mediandp'] = df['median_dp'] / df['median_slurry']
+                df['effective_total_dhppm'] = df['total_dhppm'] / df['total_slurry_dp']
+                df['effective_median_dhppm'] = df['median_dhpm'] / df['median_slurry']
                 
-                # Handle potential division by zero or infinity
-                df['effective_tee'] = df['effective_tee'].replace([np.inf, -np.inf], np.nan)
-                df['effective_mediandp'] = df['effective_mediandp'].replace([np.inf, -np.inf], np.nan)
+                # Handle potential division by zero or infinity for all effective columns
+                effective_columns = ['effective_tee', 'effective_mediandp', 
+                                  'effective_total_dhppm', 'effective_median_dhppm']
                 
-                # Fill NaN values with 0 or another appropriate value
-                df['effective_tee'] = df['effective_tee'].fillna(0)
-                df['effective_mediandp'] = df['effective_mediandp'].fillna(0)
+                for col in effective_columns:
+                    df[col] = df[col].replace([np.inf, -np.inf], np.nan)
+                    df[col] = df[col].fillna(0)
                 
                 well_name = next(well['well_name'] for well in get_well_details() if well['well_id'] == well_id)
                 df['Well Name'] = well_name

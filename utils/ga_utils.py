@@ -32,7 +32,8 @@ def zscore_data(df):
 # function to calculate statistics for the original data for modelling used in ga_main.py
 def calculate_df_statistics(df):
     columns_to_process = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 
-                         'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp']
+                         'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp',
+                         'effective_total_dhppm', 'effective_median_dhppm']
     stats = {}
     for col in columns_to_process:
         if col in df.columns:
@@ -47,7 +48,8 @@ def calculate_df_statistics(df):
 
 def calculate_zscoredf_statistics(df):
     columns_to_process = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 
-                         'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp']
+                         'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp',
+                         'effective_total_dhppm', 'effective_median_dhppm']
     stats = {}
     for col in columns_to_process:
         if col in df.columns:
@@ -97,25 +99,24 @@ def calculate_productivity(values, response_equation):
 
 def calculate_model_sensitivity(response_equation, zscored_statistics):
     try:
-        # Get median values for all attributes including the new effective columns
+        # Get median values for all attributes including all effective columns
         median_values = {attr: stats['median'] for attr, stats in zscored_statistics.items()}
         
-        # Ensure effective_tee and effective_mediandp are in median_values
-        if 'effective_tee' not in median_values:
-            print("Warning: effective_tee not found in statistics")
-            # Calculate effective_tee median from other medians
-            if 'tee' in median_values and 'total_slurry_dp' in median_values:
-                median_values['effective_tee'] = median_values['tee'] / median_values['total_slurry_dp']
-            else:
-                median_values['effective_tee'] = 0
-                
-        if 'effective_mediandp' not in median_values:
-            print("Warning: effective_mediandp not found in statistics")
-            # Calculate effective_mediandp median from other medians
-            if 'median_dp' in median_values and 'median_slurry' in median_values:
-                median_values['effective_mediandp'] = median_values['median_dp'] / median_values['median_slurry']
-            else:
-                median_values['effective_mediandp'] = 0
+        # Ensure all effective columns are in median_values
+        effective_columns = {
+            'effective_tee': ('tee', 'total_slurry_dp'),
+            'effective_mediandp': ('median_dp', 'median_slurry'),
+            'effective_total_dhppm': ('total_dhppm', 'total_slurry_dp'),
+            'effective_median_dhppm': ('median_dhpm', 'median_slurry')
+        }
+        
+        for eff_col, (num_col, den_col) in effective_columns.items():
+            if eff_col not in median_values:
+                print(f"Warning: {eff_col} not found in statistics")
+                if num_col in median_values and den_col in median_values:
+                    median_values[eff_col] = median_values[num_col] / median_values[den_col]
+                else:
+                    median_values[eff_col] = 0
         
         # Calculate baseline productivity using median values
         baseline_productivity = calculate_productivity(median_values, response_equation)
@@ -132,7 +133,8 @@ def calculate_model_sensitivity(response_equation, zscored_statistics):
         
         # List of attributes to analyze
         attributes = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 
-                     'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp']
+                     'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp',
+                     'effective_total_dhppm', 'effective_median_dhppm']
         
         for attr in attributes:
             if attr in zscored_statistics:
