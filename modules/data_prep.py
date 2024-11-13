@@ -5,7 +5,7 @@ import numpy as np
 import os
 import re
 from utils.db import (update_modeling_data, call_insert_arrays_data, 
-                      create_new_well, get_well_details, bulk_insert_well_completion_records)
+                      create_new_well, get_well_details, bulk_insert_well_completion_records, log_message)
 
 def initialize_data_prep_state():
     if 'data_prep' not in st.session_state:
@@ -297,10 +297,6 @@ def process_files(files, well_details):
         output_array_file_path = os.path.join(user_dir, f'{stage}_arrays.csv')
         result_arrays_df.to_csv(output_array_file_path, index=False)
 
-        # Y = np.sum(count == 1) #use to find the total number of analysis window. 
-        # fracdecP = Y / C
-        # SumCTemp = np.sum(count)
-
         TotalPres = np.sum(PmaxminWin)
         TotalSlurryDP = np.sum(SlrWin)
         TotalDHProp = np.sum(DownholeWinProp)
@@ -314,7 +310,6 @@ def process_files(files, well_details):
 
         file_results = [TotalPres, MedDHProp, MedianDP, DHPPM, TotDHPPM, TotalSlurryDP, MedianSlry, stage]
         all_results = pd.concat([all_results, pd.DataFrame([file_results], columns=['TEE', 'MedianDHPM', 'MedianDP', 'DownholePPM', 'TotalDHPPM', 'TotalSlurryDP', 'MedianSlurry', 'Stages'])])
-
 
     # Sort the consolidated results by the "Stages" column
     all_results = all_results.sort_values(by='Stages', ascending=True)
@@ -339,71 +334,112 @@ def process_files(files, well_details):
     )
 
 def save_data_in_db(well_id, consolidated_output, user_id):
-    # Update modeling data
-    modeling_data_summary = update_modeling_data(well_id, consolidated_output.to_dict(orient='records'), user_id)
-
-    if modeling_data_summary is None:
-        st.error("Failed to insert modeling data into the database.")
-        return
-
-    # Consolidated summary for data for modeling
-    st.subheader("Database Operation Summary")
-    st.write(f"Records updated or added: {len(modeling_data_summary)}")
-
-    # Display summary of inserted modeling data
-    st.dataframe(pd.DataFrame(modeling_data_summary), use_container_width=True, hide_index=True)
-
-    arrays_summary = []
-
-    # Initialize the progress bar for the insertion process
-    progress_bar = st.progress(0)
-    progress_text = st.empty()
-
-    # Process and insert arrays data for each stage
-    for i, item in enumerate(modeling_data_summary):
-        stage = item['stage']
-        data_id = item['data_id']
-
-        arrays_file_path = os.path.join('export', str(user_id), f'{stage}_arrays.csv')
-        if os.path.exists(arrays_file_path):
-            arrays_data = pd.read_csv(arrays_file_path)
-
-            # Find the index of the last non-zero row
-            last_non_zero_index = arrays_data.ne(0).any(axis=1)[::-1].idxmax()
-
-            # Filter out the rows from the last non-zero row to the end if they are all zero
-            arrays_data_filtered = arrays_data.loc[:last_non_zero_index].reset_index(drop=True)
-
-            # Update the progress bar
-            progress_bar.progress((i + 1) / len(modeling_data_summary))
-            progress_text.text(f"Inserting arrays data for stage {stage}")
-
-            # Convert the filtered DataFrame to a list of dictionaries
-            arrays_data_filtered_dict = arrays_data_filtered.to_dict(orient='records')
-
-            # Call the function to insert arrays data
-            stage_summary = call_insert_arrays_data(data_id, arrays_data_filtered_dict, user_id)
+    try:
+        # Check if inputs are valid
+        if well_id is None:
+            st.error("No well ID provided")
+            return False
             
-            # Check the status of the insertion and handle accordingly
-            if stage_summary['status'] == 'success':
-                arrays_summary.append({'stage': stage, 'records_added': stage_summary['records_added']})
-            else:
-                st.error(f"Failed to insert arrays data for stage {stage}: {stage_summary['message']}")
+        if consolidated_output is None:
+            st.error("No consolidated data available to save. Please process files first.")
+            return False
+            
+        if not isinstance(consolidated_output, pd.DataFrame):
+            st.error("Invalid data format. Expected a pandas DataFrame.")
+            return False
+            
+        if consolidated_output.empty:
+            st.error("Consolidated data is empty. No data to save.")
+            return False
 
-    # Display consolidated arrays data insertion summary
-    st.subheader("Arrays Data Insertion Summary")
-    if arrays_summary:
-        summary_df = pd.DataFrame(arrays_summary)
-        st.dataframe(summary_df, use_container_width=True, hide_index=True)
-    else:
-        st.write("No data inserted.")
+        # Convert DataFrame to records and update database
+        modeling_data_summary = update_modeling_data(
+            well_id, 
+            consolidated_output.to_dict(orient='records'), 
+            user_id
+        )
 
-    # Cleanup: Remove the user-specific directory
-    user_dir = os.path.join('export', str(user_id))
-    if os.path.exists(user_dir):
-        for file in os.listdir(user_dir):
-            os.remove(os.path.join(user_dir, file))
-        os.rmdir(user_dir)
+        if modeling_data_summary is None:
+            st.error("Failed to insert modeling data into the database.")
+            return False
+
+        # Display summary of inserted modeling data
+        st.subheader("Database Operation Summary")
+        st.write(f"Records updated or added: {len(modeling_data_summary)}")
+        st.dataframe(pd.DataFrame(modeling_data_summary), use_container_width=True, hide_index=True)
+
+        # Process and insert arrays data
+        arrays_summary = []
+        progress_bar = st.progress(0)
+        progress_text = st.empty()
+
+        for i, item in enumerate(modeling_data_summary):
+            stage = item['stage']
+            data_id = item['data_id']
+
+            arrays_file_path = os.path.join('export', str(user_id), f'{stage}_arrays.csv')
+            if os.path.exists(arrays_file_path):
+                try:
+                    # Read and process arrays data
+                    arrays_data = pd.read_csv(arrays_file_path)
+                    last_non_zero_index = arrays_data.ne(0).any(axis=1)[::-1].idxmax()
+                    arrays_data_filtered = arrays_data.loc[:last_non_zero_index].reset_index(drop=True)
+
+                    # Update progress
+                    progress_bar.progress((i + 1) / len(modeling_data_summary))
+                    progress_text.text(f"Inserting arrays data for stage {stage}")
+
+                    # Insert arrays data
+                    stage_summary = call_insert_arrays_data(
+                        data_id, 
+                        arrays_data_filtered.to_dict(orient='records'),
+                        user_id
+                    )
+
+                    if stage_summary['status'] == 'success':
+                        arrays_summary.append({
+                            'stage': stage, 
+                            'records_added': stage_summary['records_added']
+                        })
+                    else:
+                        st.error(f"Failed to insert arrays data for stage {stage}: {stage_summary['message']}")
+
+                except Exception as e:
+                    st.error(f"Error processing arrays data for stage {stage}: {str(e)}")
+                    log_message(logging.ERROR, f"Error processing arrays data for stage {stage}: {str(e)}")
+
+        # Display arrays data insertion summary
+        st.subheader("Arrays Data Insertion Summary")
+        if arrays_summary:
+            summary_df = pd.DataFrame(arrays_summary)
+            st.dataframe(summary_df, use_container_width=True, hide_index=True)
+        else:
+            st.warning("No arrays data was inserted.")
+
+        # Cleanup temporary files
+        try:
+            user_dir = os.path.join('export', str(user_id))
+            if os.path.exists(user_dir):
+                for file in os.listdir(user_dir):
+                    os.remove(os.path.join(user_dir, file))
+                os.rmdir(user_dir)
+        except Exception as e:
+            log_message(logging.WARNING, f"Error cleaning up temporary files: {str(e)}")
+
+        st.success("Data successfully saved to database!")
+        return True
+
+    except Exception as e:
+        st.error(f"Error saving data to database: {str(e)}")
+        log_message(logging.ERROR, f"Error in save_data_in_db: {str(e)}")
+        return False
+
+    finally:
+        # Clear progress indicators
+        if 'progress_bar' in locals():
+            progress_bar.empty()
+        if 'progress_text' in locals():
+            progress_text.empty()
 
 if __name__ == "__main__":
     main()

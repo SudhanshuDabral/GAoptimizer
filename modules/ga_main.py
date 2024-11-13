@@ -16,7 +16,7 @@ from utils.ga_utils import (zscore_data, calculate_df_statistics,
                              validate_custom_equation, calculate_predicted_productivity, 
                              calculate_model_sensitivity, calculate_zscoredf_statistics, perform_sensitivity_test)
 
-from utils.reporting import generate_pdf_report, generate_ppt_report
+from utils.reporting import generate_pdf_report, generate_ppt_report, generate_monotonicity_pdf_report
 import time
 import os
 import numpy as np
@@ -595,7 +595,55 @@ def monotonicity_check_modal():
         else:
             run_monotonicity_check(well_id, selected_stages, equation_to_use)        
     
-    display_monotonicity_results(selected_stages)
+    # Store the plots in session state if they don't exist
+    if 'monotonicity_plots' not in st.session_state:
+        st.session_state.monotonicity_plots = {}
+    
+    # Display plots and store them
+    if st.session_state.ga_optimizer['monotonicity_results']:
+        st.session_state.monotonicity_plots = {}  # Reset plots dictionary
+        for stage, result_df in st.session_state.ga_optimizer['monotonicity_results'].items():
+            required_columns = ['Productivity', 'total_dhppm_stage', 'total_slurry_dp_stage']
+            missing_columns = [col for col in required_columns if col not in result_df.columns]
+            
+            if missing_columns:
+                st.warning(f"Stage {stage}: Missing columns: {', '.join(missing_columns)}")
+                st.write("Available columns:", result_df.columns.tolist())
+            else:
+                fig = plot_column(result_df, stage)
+                st.plotly_chart(fig, use_container_width=True)
+                # Store the plot in session state
+                st.session_state.monotonicity_plots[stage] = fig
+        
+        # Add export button if there are plots to export
+        if st.session_state.monotonicity_plots:
+            if st.button("Export Monotonicity Plots to PDF"):
+                try:
+                    with st.spinner("Generating PDF report..."):
+                        # Use the selected_well name directly from the selectbox
+                        well_name = selected_well  # This is the actual well name
+                        
+                        pdf_buffer = generate_monotonicity_pdf_report(
+                            st.session_state.monotonicity_plots,
+                            st.session_state.user_id,
+                            well_name=well_name,
+                            model_equation=equation_to_use
+                        )
+                        
+                        # Use well name in the file name
+                        safe_well_name = "".join(x for x in well_name if x.isalnum() or x in (' ', '-', '_'))
+                        st.download_button(
+                            label="Download Monotonicity Report",
+                            data=pdf_buffer,
+                            file_name=f"monotonicity_analysis_{safe_well_name}.pdf",
+                            mime="application/pdf"
+                        )
+                        st.success("PDF report generated successfully!")
+                except Exception as e:
+                    st.error(f"Error generating PDF report: {str(e)}")
+                    log_message(logging.ERROR, f"Error generating monotonicity PDF report: {str(e)}", exc_info=True)
+    else:
+        st.info("Run Monotonicity check to see results.")
 
 def run_monotonicity_check(well_id, selected_stages, equation_to_use):
     progress_bar = st.progress(0)
@@ -616,28 +664,6 @@ def run_monotonicity_check(well_id, selected_stages, equation_to_use):
     st.session_state.ga_optimizer['monotonicity_results'] = results
     status_text.text("Monotonicity check completed!")
     st.success(f"Monotonicity check completed successfully for {len(results)} out of {len(selected_stages)} stages.")
-
-def display_monotonicity_results(selected_stages):
-    if st.session_state.ga_optimizer['monotonicity_results']:
-        
-        st.subheader("Productivity, Total DHPPM, and Total Slurry DP Plots for Selected Stages")
-        for stage, result_df in st.session_state.ga_optimizer['monotonicity_results'].items():
-            # Check if the required columns are present
-                required_columns = ['Productivity', 'total_dhppm_stage', 'total_slurry_dp_stage']
-                missing_columns = [col for col in required_columns if col not in result_df.columns]
-                
-                if missing_columns:
-                    st.warning(f"Stage {stage}: Missing columns: {', '.join(missing_columns)}")
-                    st.write("Available columns:", result_df.columns.tolist())
-                else:
-                    fig = plot_column(result_df, stage)
-                    st.plotly_chart(fig, use_container_width=True)
-
-                # Display the first few rows of the DataFrame for this stage
-                # st.write(f"Preview of data for Stage {stage}:")
-                # st.dataframe(result_df.head())
-    else:
-        st.info("Run Monotonicity check to see results.")
 
 # Sensitivity Test
 def sensitivity_test_section():

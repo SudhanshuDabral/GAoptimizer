@@ -224,7 +224,17 @@ def batch_monotonicity_check(stages, well_id, get_array_data_func, df_statistics
 
 # function to validate custom equation for modelling used in ga_main.py
 def validate_custom_equation(equation):
-    valid_features = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp']
+    """
+    Validate a custom equation for the GA model.
+    
+    :param equation: str, the equation to validate
+    :return: tuple(bool, str), (is_valid, message)
+    """
+    valid_features = [
+        'tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 
+        'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp',
+        'effective_total_dhppm', 'effective_median_dhppm'
+    ]
     
     # Check if equation starts with "Corrected_Prod ="
     if not equation.strip().startswith("Corrected_Prod ="):
@@ -233,31 +243,29 @@ def validate_custom_equation(equation):
     # Remove "Corrected_Prod =" from the equation for further processing
     equation = equation.replace("Corrected_Prod =", "").strip()
     
-    # Check for valid features
-    for feature in valid_features:
-        equation = equation.replace(feature, "x")
+    # Split the equation into terms using regular expression that handles parentheses
+    terms = re.findall(r'[+\-]?\s*\(?\s*[-]?\d*\.?\d*\s*\*?\s*(?:\w+(?:\s*\*\s*\w+)*)?\)?', equation)
     
-    # Replace ^2 with **2 for proper Python syntax
-    equation = equation.replace("^2", "**2")
+    for term in terms:
+        if term.strip() in ['+', '-', '']:
+            continue
+            
+        # Extract features from the term (ignore coefficients and operators)
+        # This regex looks for words (features) after any numbers, operators, or parentheses
+        features = re.findall(r'(?:^|[-+*/\s])((?:effective_)?[a-zA-Z_]+)(?:\s*(?:\*|\+|-|$))', term)
+        
+        # Validate each feature
+        for feature in features:
+            feature = feature.strip()
+            if feature and feature not in valid_features:
+                return False, f"Invalid feature found: {feature}"
     
-    # Remove all spaces
-    equation = equation.replace(" ", "")
-    
-    # Check for valid characters
-    valid_chars = set('x+-*/().**0123456789')
-    if not all(char in valid_chars for char in equation):
-        return False, "Equation contains invalid characters"
-    
-    # Check for balanced parentheses
-    if equation.count('(') != equation.count(')'):
-        return False, "Unbalanced parentheses in equation"
-    
-    # Try to evaluate the equation
+    # Try to evaluate the equation with dummy values
     try:
-        x = 1  # Dummy value for testing
-        eval(equation)
+        test_values = {feature: 1.0 for feature in valid_features}
+        calculate_productivity(test_values, "Corrected_Prod = " + equation)
     except Exception as e:
-        return False, f"Invalid equation structure: {str(e)}"
+        return False, f"Error evaluating equation: {str(e)}"
     
     return True, "Equation is valid"
 

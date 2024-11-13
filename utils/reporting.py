@@ -369,6 +369,126 @@ def generate_ppt_report(custom_equation, baseline_productivity, general_results,
     finally:
         cleanup_images(user_id)
 
+def generate_monotonicity_pdf_report(plots_data, user_id, well_name=None, model_equation=None):
+    """
+    Generate a PDF report containing monotonicity plots.
+    
+    :param plots_data: Dictionary containing stage numbers and their corresponding plotly figures
+    :param user_id: str, user identifier
+    :param well_name: str, name of the well being analyzed
+    :param model_equation: str, the equation used in the model
+    :return: BytesIO buffer containing the PDF
+    """
+    overall_start_time = time.time()
+    log_message(logging.INFO, "Starting Monotonicity PDF report generation")
+    buffer = BytesIO()
+    
+    try:
+        doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), 
+                              rightMargin=36, leftMargin=36, 
+                              topMargin=36, bottomMargin=18)
+        
+        styles = getSampleStyleSheet()
+        styles.add(ParagraphStyle(
+            name='CoverTitle',
+            parent=styles['Title'],
+            fontSize=24,
+            spaceAfter=30
+        ))
+        styles.add(ParagraphStyle(
+            name='WellName',
+            parent=styles['Normal'],
+            fontSize=16,
+            spaceAfter=20
+        ))
+        styles.add(ParagraphStyle(
+            name='ModelEquation',
+            parent=styles['Normal'],
+            fontSize=12,
+            leftIndent=36,
+            rightIndent=36,
+            spaceAfter=30
+        ))
+        
+        elements = []
+        
+        # Cover Page
+        elements.append(Paragraph("Monotonicity Analysis Report", styles['CoverTitle']))
+        elements.append(Spacer(1, 20))
+        
+        if well_name:
+            elements.append(Paragraph(f"Well Name: {well_name}", styles['WellName']))
+        
+        if model_equation:
+            elements.append(Paragraph("Model Equation:", styles['Heading2']))
+            # Split equation into multiple lines for better readability
+            max_chars_per_line = 100
+            equation_lines = []
+            current_line = ""
+            for word in model_equation.split():
+                if len(current_line) + len(word) + 1 <= max_chars_per_line:
+                    current_line += " " + word if current_line else word
+                else:
+                    equation_lines.append(current_line)
+                    current_line = word
+            if current_line:
+                equation_lines.append(current_line)
+            
+            for line in equation_lines:
+                elements.append(Paragraph(line, styles['ModelEquation']))
+        
+        # Add date and time of report generation
+        current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        elements.append(Paragraph(f"Generated on: {current_time}", styles['Normal']))
+        
+        elements.append(PageBreak())
+        
+        # Table of Contents
+        elements.append(Paragraph("Contents", styles['Heading1']))
+        elements.append(Spacer(1, 12))
+        toc_items = [f"Stage {stage}" for stage in plots_data.keys()]
+        for item in toc_items:
+            elements.append(Paragraph(f"• {item}", styles['Normal']))
+        
+        elements.append(PageBreak())
+        
+        # Add plots for each stage
+        for stage, plot_data in plots_data.items():
+            elements.append(Paragraph(f"Stage {stage}", styles['Heading2']))
+            elements.append(Spacer(1, 12))
+            
+            try:
+                img_path = save_plot_as_image(plot_data, f"monotonicity_stage_{stage}", user_id)
+                img = Image(img_path, width=10*inch, height=5.6*inch)
+                elements.append(img)
+            except Exception as e:
+                log_message(logging.ERROR, f"Error adding plot for Stage {stage} to PDF: {str(e)}", exc_info=True)
+                elements.append(Paragraph(f"Error including plot for Stage {stage}: {str(e)}", styles['Normal']))
+            
+            elements.append(Spacer(1, 12))
+            elements.append(PageBreak())
+        
+        # Build the PDF
+        log_message(logging.DEBUG, "Building PDF")
+        pdf_start_time = time.time()
+        doc.build(elements)
+        log_message(logging.DEBUG, f"Built PDF in {time.time() - pdf_start_time:.2f} seconds")
+        
+        # Reset buffer position
+        buffer.seek(0)
+        
+        overall_end_time = time.time()
+        log_message(logging.INFO, f"Monotonicity PDF report generated successfully in {overall_end_time - overall_start_time:.2f} seconds")
+        return buffer
+        
+    except Exception as e:
+        log_message(logging.ERROR, f"Error in Monotonicity PDF report generation: {str(e)}", exc_info=True)
+        raise
+    finally:
+        if 'doc' in locals():
+            del doc
+        cleanup_images(user_id)
+
 if __name__ == "__main__":
     # You can add any test code here if needed
     pass
