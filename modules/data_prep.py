@@ -205,24 +205,50 @@ def process_files(files, well_details):
 
         # Load the CSV file using column headers
         data = pd.read_csv(temp_file_path)
-        # Ensure timestamp_utc is in datetime format and calculate seconds from the first timestamp
-        data['timestamp_utc'] = pd.to_datetime(data['timestamp_utc'])
+        
+        # Create synthetic timestamps if needed
+        if 'time' in data.columns and 'epoch' not in data.columns and 'timestamp_utc' not in data.columns:
+            # Create a base timestamp (e.g., start of 2024)
+            base_timestamp = pd.Timestamp('2024-01-01')
+            # Convert time in seconds to timedelta and add to base timestamp
+            data['timestamp_utc'] = base_timestamp + pd.to_timedelta(data['time'], unit='s')
+            # Create epoch (Unix timestamp in seconds)
+            data['epoch'] = data['timestamp_utc'].astype('int64') // 10**9
+            T = data['time'].values
+        elif 'timestamp_utc' in data.columns:
+            # Ensure timestamp_utc is in datetime format and calculate seconds from the first timestamp
+            data['timestamp_utc'] = pd.to_datetime(data['timestamp_utc'])
+            data['time'] = (data['timestamp_utc'] - data['timestamp_utc'].min()).dt.total_seconds()
+            T = data['time'].values
+        elif 'time' in data.columns:
+            T = data['time'].values
+        else:
+            st.error(f"Required column 'time' or 'timestamp_utc' not found in file: {file.name}")
+            continue
 
-        data['seconds'] = (data['timestamp_utc'] - data['timestamp_utc'].min()).dt.total_seconds()
-    
         # Extract data using column headers
-        T = data['seconds'].values
         SlRate = data['slurry_rate'].values
         Pres = data['treating_pressure'].values
-        DownHoleProp = data['bottomhole_prop_mass'].values
+        
+        # Handle different column names for bottomhole proppant mass
+        if 'bottomhole_prop_mass' in data.columns:
+            DownHoleProp = data['bottomhole_prop_mass'].values
+            prop_mass_col = 'bottomhole_prop_mass'
+        elif 'bottom_prop_mass' in data.columns:
+            DownHoleProp = data['bottom_prop_mass'].values
+            data['bottomhole_prop_mass'] = data['bottom_prop_mass']  # Add standardized column name
+            prop_mass_col = 'bottomhole_prop_mass'
+        else:
+            st.error(f"Required column 'bottomhole_prop_mass' or 'bottom_prop_mass' not found in file: {file.name}")
+            continue
 
         completion_data = pd.DataFrame({
-        'treating_pressure': data['treating_pressure'],
-        'slurry_rate': data['slurry_rate'],
-        'bottomhole_prop_mass': data['bottomhole_prop_mass'],
-        'time_seconds': data['seconds'].astype(int),
-        'epoch': data['epoch']  # Use the original timestamp_utc value
-    })
+            'treating_pressure': data['treating_pressure'],
+            'slurry_rate': data['slurry_rate'],
+            'bottomhole_prop_mass': DownHoleProp,
+            'time_seconds': T.astype(int),
+            'epoch': data['epoch'] if 'epoch' in data.columns else None
+        })
 
         insert_result = bulk_insert_well_completion_records(st.session_state.data_prep['well_id'], stage, completion_data, user_id)
 
@@ -287,6 +313,9 @@ def process_files(files, well_details):
                 PmaxminWin[j] = Pmaxmin[j]
                 DownholeWinProp[j] = WinProp[j]
 
+        # After calculating count array, get the number of windows
+        num_windows = np.sum(count > 0)  # Count number of windows where count is 1
+
         # Save arrays data to CSV
         result_arrays_df = pd.DataFrame({
             'SlrWin': SlrWin,
@@ -308,15 +337,15 @@ def process_files(files, well_details):
         TotDHPPM = TotalDHProp / TotalPres
         DHPPM = MedDHProp / MedianDP
 
-        file_results = [TotalPres, MedDHProp, MedianDP, DHPPM, TotDHPPM, TotalSlurryDP, MedianSlry, stage]
-        all_results = pd.concat([all_results, pd.DataFrame([file_results], columns=['TEE', 'MedianDHPM', 'MedianDP', 'DownholePPM', 'TotalDHPPM', 'TotalSlurryDP', 'MedianSlurry', 'Stages'])])
+        file_results = [TotalPres, MedDHProp, MedianDP, DHPPM, TotDHPPM, TotalSlurryDP, MedianSlry, stage, num_windows, TotalDHProp]
+        all_results = pd.concat([all_results, pd.DataFrame([file_results], columns=['TEE', 'MedianDHPM', 'MedianDP', 'DownholePPM', 'TotalDHPPM', 'TotalSlurryDP', 'MedianSlurry', 'Stages', '# of Windows', 'TotalDHProp'])])
 
     # Sort the consolidated results by the "Stages" column
     all_results = all_results.sort_values(by='Stages', ascending=True)
 
     # Writing the consolidated results to an Excel file
-    output_file_path = os.path.join(user_dir, 'consolidated_output.csv')
-    all_results.to_csv(output_file_path, index=False)
+    # output_file_path = os.path.join(user_dir, 'consolidated_output.csv')
+    # all_results.to_csv(output_file_path, index=False)
 
     # Save the consolidated results in session state
     st.session_state.data_prep['consolidated_output'] = all_results
@@ -325,13 +354,13 @@ def process_files(files, well_details):
     progress_bar.empty()
     progress_text.empty()
 
-    st.success(f"Consolidated data exported successfully to {output_file_path}")
-    st.download_button(
-        label="Download consolidated output",
-        data=open(output_file_path, "rb").read(),
-        file_name="consolidated_output.csv",
-        mime="text/csv"
-    )
+    # st.success(f"Consolidated data exported successfully to {output_file_path}")
+    # st.download_button(
+    #     label="Download consolidated output",
+    #     data=open(output_file_path, "rb").read(),
+    #     file_name="consolidated_output.csv",
+    #     mime="text/csv"
+    # )
 
 def save_data_in_db(well_id, consolidated_output, user_id):
     try:

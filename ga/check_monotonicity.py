@@ -36,7 +36,8 @@ def calculate_stage(df, column, avg, std):
             df['median_slurry_original'][i],
             df['total_slurry_dp_original'][i],
             df['tee_original'][i],
-            df['total_dhppm_original'][i]
+            df['total_dhppm_original'][i],
+            df['total_dh_prop_original'][i]
         )
         if min_value > 0:
             value = (df[column][i] - avg) / std
@@ -67,13 +68,15 @@ def check_monotonicity(array_data, df_statistics, response_equation):
     df['tee_original'] = calculate_cumulative_sum(df['pmaxmin_win'])
     df['total_prop_original'] = calculate_cumulative_sum(df['downhole_win_prop'])
     df['total_dhppm_original'] = calculate_ratio(df['total_prop_original'], df['tee_original'])
+    df['total_dh_prop_original'] = calculate_cumulative_sum(df['downhole_win_prop'])
     
     # Calculate effective columns
     df['effective_tee'] = calculate_ratio(df['tee_original'], df['total_slurry_dp_original'])
     df['effective_mediandp'] = calculate_ratio(df['median_dp_original'], df['median_slurry_original'])
     df['effective_total_dhppm'] = calculate_ratio(df['total_dhppm_original'], df['total_slurry_dp_original'])
     df['effective_median_dhppm'] = calculate_ratio(df['median_dhpm_original'], df['median_slurry_original'])
-    
+    # df['effective_total_dh_prop'] = calculate_ratio(df['total_dh_prop_original'], df['tee_original'])
+
     # Calculate stage values using statistics from df_statistics
     df['tee_stage'] = calculate_stage(df, 'tee_original', df_statistics['tee']['mean'], df_statistics['tee']['std'])
     df['median_dhpm_stage'] = calculate_stage(df, 'median_dhpm_original', df_statistics['median_dhpm']['mean'], df_statistics['median_dhpm']['std'])
@@ -82,11 +85,26 @@ def check_monotonicity(array_data, df_statistics, response_equation):
     df['total_dhppm_stage'] = calculate_stage(df, 'total_dhppm_original', df_statistics['total_dhppm']['mean'], df_statistics['total_dhppm']['std'])
     df['total_slurry_dp_stage'] = calculate_stage(df, 'total_slurry_dp_original', df_statistics['total_slurry_dp']['mean'], df_statistics['total_slurry_dp']['std'])
     df['median_slurry_stage'] = calculate_stage(df, 'median_slurry_original', df_statistics['median_slurry']['mean'], df_statistics['median_slurry']['std'])
+    df['total_dh_prop_stage'] = calculate_stage(df, 'total_dh_prop_original', df_statistics['total_dh_prop']['mean'], df_statistics['total_dh_prop']['std'])
 
     # Calculate Productivity
     stage_columns = ['tee_stage', 'median_dhpm_stage', 'median_dp_stage', 'downhole_ppm_stage', 
-                     'total_dhppm_stage', 'total_slurry_dp_stage', 'median_slurry_stage']
+                     'total_dhppm_stage', 'total_slurry_dp_stage', 'median_slurry_stage', 'total_dh_prop_stage']
     
+    # Export stage columns and parameters to separate sheets
+    stage_df = df[stage_columns].copy()
+    params_df = df[[
+        'median_dp_original', 'median_dhpm_original', 'dhppm_original',
+        'median_slurry_original', 'total_slurry_dp_original', 'tee_original',
+        'total_prop_original', 'total_dhppm_original', 'total_dh_prop_original',
+        'effective_tee', 'effective_mediandp', 'effective_total_dhppm',
+        'effective_median_dhppm'
+    ]].copy()
+    
+    # Export to Excel with multiple sheets
+    with pd.ExcelWriter('monotonicity_data.xlsx') as writer:
+        stage_df.to_excel(writer, sheet_name='Stage Values', index=False)
+        params_df.to_excel(writer, sheet_name='Parameters', index=False)
     df['Productivity'] = df.apply(lambda row: calculate_productivity(row, stage_columns, response_equation), axis=1)
 
     return df

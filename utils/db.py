@@ -97,7 +97,7 @@ def update_modeling_data(well_id, consolidated_output, user_id):
                 UPDATE data_for_modeling 
                 SET tee = %s, median_dhpm = %s, median_dp = %s, downhole_ppm = %s, 
                     total_dhppm = %s, total_slurry_dp = %s, median_slurry = %s, 
-                    updated_by = %s, updated_on = CURRENT_TIMESTAMP
+                    total_dh_prop = %s, updated_by = %s, updated_on = CURRENT_TIMESTAMP
                 WHERE well_id = %s AND stage = %s
                 RETURNING data_id, stage
                 """
@@ -109,6 +109,7 @@ def update_modeling_data(well_id, consolidated_output, user_id):
                     row['TotalDHPPM'],
                     row['TotalSlurryDP'],
                     row['MedianSlurry'],
+                    row['TotalDHProp'],
                     user_id,
                     well_id,
                     row['Stages']
@@ -118,8 +119,8 @@ def update_modeling_data(well_id, consolidated_output, user_id):
                 insert_query = """
                 INSERT INTO data_for_modeling 
                 (well_id, tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, 
-                 total_slurry_dp, median_slurry, stage, updated_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 total_slurry_dp, median_slurry, total_dh_prop, stage, updated_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING data_id, stage
                 """
                 cur.execute(insert_query, (
@@ -131,6 +132,7 @@ def update_modeling_data(well_id, consolidated_output, user_id):
                     row['TotalDHPPM'],
                     row['TotalSlurryDP'],
                     row['MedianSlurry'],
+                    row['TotalDHProp'],
                     row['Stages'],
                     user_id
                 ))
@@ -267,7 +269,7 @@ def get_modeling_data(well_id):
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("""
-            SELECT data_id, well_id, tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, total_slurry_dp, median_slurry, stage
+            SELECT data_id, well_id, tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, total_slurry_dp, median_slurry, total_dh_prop, stage
             FROM data_for_modeling
             WHERE well_id = %s
             ORDER BY stage ASC

@@ -33,7 +33,7 @@ def zscore_data(df):
 def calculate_df_statistics(df):
     columns_to_process = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 
                          'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp',
-                         'effective_total_dhppm', 'effective_median_dhppm']
+                         'effective_total_dhppm', 'effective_median_dhppm', 'total_dh_prop']
     stats = {}
     for col in columns_to_process:
         if col in df.columns:
@@ -49,7 +49,7 @@ def calculate_df_statistics(df):
 def calculate_zscoredf_statistics(df):
     columns_to_process = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 
                          'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp',
-                         'effective_total_dhppm', 'effective_median_dhppm']
+                         'effective_total_dhppm', 'effective_median_dhppm', 'total_dh_prop']
     stats = {}
     for col in columns_to_process:
         if col in df.columns:
@@ -134,7 +134,7 @@ def calculate_model_sensitivity(response_equation, zscored_statistics):
         # List of attributes to analyze
         attributes = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 
                      'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp',
-                     'effective_total_dhppm', 'effective_median_dhppm']
+                     'effective_total_dhppm', 'effective_median_dhppm', 'total_dh_prop']
         
         for attr in attributes:
             if attr in zscored_statistics:
@@ -233,7 +233,7 @@ def validate_custom_equation(equation):
     valid_features = [
         'tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 
         'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp',
-        'effective_total_dhppm', 'effective_median_dhppm'
+        'effective_total_dhppm', 'effective_median_dhppm', 'total_dh_prop'
     ]
     
     # Check if equation starts with "Corrected_Prod ="

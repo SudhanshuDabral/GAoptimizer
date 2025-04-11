@@ -324,10 +324,12 @@ def fetch_consolidated_data(well_ids):
                 df['effective_mediandp'] = df['median_dp'] / df['median_slurry']
                 df['effective_total_dhppm'] = df['total_dhppm'] / df['total_slurry_dp']
                 df['effective_median_dhppm'] = df['median_dhpm'] / df['median_slurry']
+                df['effective_total_dh_prop'] = df['total_dh_prop'] / df['total_slurry_dp']
                 
                 # Handle potential division by zero or infinity for all effective columns
                 effective_columns = ['effective_tee', 'effective_mediandp', 
-                                  'effective_total_dhppm', 'effective_median_dhppm']
+                                  'effective_total_dhppm', 'effective_median_dhppm',
+                                  'effective_total_dh_prop']
                 
                 for col in effective_columns:
                     df[col] = df[col].replace([np.inf, -np.inf], np.nan)
@@ -563,7 +565,7 @@ def monotonicity_check_modal():
     if selected_model == "Custom Equation":
         custom_equation = st.text_area(
             "Enter custom equation", 
-            placeholder="Corrected_Prod = ... (use only tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, total_slurry_dp, median_slurry)", key='monotonicity_custom_eqn' ,
+            placeholder="Corrected_Prod = ... (use only tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, total_slurry_dp, median_slurry, total_dh_prop)", key='monotonicity_custom_eqn' ,
             height=100
         )
         
