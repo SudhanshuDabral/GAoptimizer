@@ -201,6 +201,7 @@ def call_insert_arrays_data(data_id, arrays_data, user_id):
         for row in arrays_data:
             arrays_data_tuples.append((
                 data_id,
+                row['window_iteration'],
                 row['SlrWin'],
                 row['PmaxminWin'],
                 row['DownholeWinProp'],
@@ -209,8 +210,8 @@ def call_insert_arrays_data(data_id, arrays_data, user_id):
 
         psycopg2.extras.execute_batch(cur, 
             """
-            INSERT INTO arrays (data_id, slr_win, pmaxmin_win, downhole_win_prop, updated_by)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO arrays (data_id, window_iteration, slr_win, pmaxmin_win, downhole_win_prop, updated_by)
+            VALUES (%s, %s, %s, %s, %s, %s)
             """, 
             arrays_data_tuples)
 
@@ -299,16 +300,17 @@ def get_well_stages(well_id):
     log_message(logging.INFO, f"Fetched {len(stages)} stages for well_id: {well_id}")
     return stages
 
-@st.cache_data
+
 def get_array_data(well_id, stage):
     log_message(logging.INFO, f"Fetching array data for well_id: {well_id}, stage: {stage}")
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute("""
-        SELECT a.slr_win, a.pmaxmin_win, a.downhole_win_prop
+        SELECT a.window_iteration, a.slr_win, a.pmaxmin_win, a.downhole_win_prop
         FROM arrays a
         JOIN data_for_modeling d ON a.data_id = d.data_id
         WHERE d.well_id = %s AND d.stage = %s
+        ORDER BY a.window_iteration ASC
     """, (well_id, stage))
     array_data = cur.fetchall()
     cur.close()

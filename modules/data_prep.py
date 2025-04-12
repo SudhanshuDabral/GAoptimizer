@@ -316,11 +316,15 @@ def process_files(files, well_details):
         # After calculating count array, get the number of windows
         num_windows = np.sum(count > 0)  # Count number of windows where count is 1
 
-        # Save arrays data to CSV
+        # Create window iteration numbers for valid windows
+        window_iterations = np.arange(1, num_windows + 1)
+
+        # Save arrays data to CSV with window iteration
         result_arrays_df = pd.DataFrame({
-            'SlrWin': SlrWin,
-            'PmaxminWin': PmaxminWin,
-            'DownholeWinProp': DownholeWinProp
+            'window_iteration': window_iterations,
+            'SlrWin': SlrWin[count > 0],
+            'PmaxminWin': PmaxminWin[count > 0],
+            'DownholeWinProp': DownholeWinProp[count > 0]
         })
 
         output_array_file_path = os.path.join(user_dir, f'{stage}_arrays.csv')

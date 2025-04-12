@@ -88,7 +88,7 @@ def plot_column(df, stage):
     fig = go.Figure()
 
     columns_to_plot = ['Productivity', 'total_dhppm_stage', 'total_slurry_dp_stage']
-    colors = ['blue', 'red', 'green']
+    colors = ['green', 'red', 'blue']
 
     for i, (column, color) in enumerate(zip(columns_to_plot, colors)):
         if column in df.columns:
@@ -108,8 +108,8 @@ def plot_column(df, stage):
         xaxis_title='Index',
         yaxis=dict(
             title='Productivity',
-            titlefont=dict(color="blue"),
-            tickfont=dict(color="blue")
+            titlefont=dict(color="green"),
+            tickfont=dict(color="green")
         ),
         yaxis2=dict(
             title='DHPPM / Slurry DP',
