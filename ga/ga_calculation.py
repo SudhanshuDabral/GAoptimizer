@@ -44,6 +44,7 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
         warnings.simplefilter("always")
 
         try:
+            # Remove data_id and well_id from predictors if they exist
             predictors = [p for p in predictors if p not in ['data_id', 'well_id']]
             
             X = df[predictors].values
@@ -162,15 +163,23 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
                         X_sub = X_poly[:, selected_features]
                         y_pred = model.predict(X_sub)
                         errors = (y - y_pred)**2
-                        errors_df = pd.DataFrame({
-                            'data_id': df['data_id'],
-                            'well_id': df['well_id'],
+                        
+                        # Create errors_df with available columns
+                        errors_df_data = {
                             'WellName': df['Well Name'],
                             'stage': df['stage'],
                             'Actual': y,
                             'Predicted': y_pred,
                             'Error': errors
-                        })
+                        }
+                        
+                        # Add data_id and well_id if they exist
+                        if 'data_id' in df.columns:
+                            errors_df_data['data_id'] = df['data_id']
+                        if 'well_id' in df.columns:
+                            errors_df_data['well_id'] = df['well_id']
+                            
+                        errors_df = pd.DataFrame(errors_df_data)
 
                         best_equation = equation
                         best_selected_features = selected_feature_names

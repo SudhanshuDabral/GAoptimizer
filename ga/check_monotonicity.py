@@ -91,6 +91,9 @@ def check_monotonicity(array_data, df_statistics, response_equation):
     stage_columns = ['tee_stage', 'median_dhpm_stage', 'median_dp_stage', 'downhole_ppm_stage', 
                      'total_dhppm_stage', 'total_slurry_dp_stage', 'median_slurry_stage', 'total_dh_prop_stage']
     
+    # Calculate Productivity using the provided equation
+    df['Productivity'] = df.apply(lambda row: calculate_productivity(row, stage_columns, response_equation), axis=1)
+    
     # Export stage columns and parameters to separate sheets
     stage_df = df[stage_columns].copy()
     params_df = df[[
@@ -100,12 +103,6 @@ def check_monotonicity(array_data, df_statistics, response_equation):
         'effective_tee', 'effective_mediandp', 'effective_total_dhppm',
         'effective_median_dhppm'
     ]].copy()
-    
-    # Export to Excel with multiple sheets
-    with pd.ExcelWriter('monotonicity_data.xlsx') as writer:
-        stage_df.to_excel(writer, sheet_name='Stage Values', index=False)
-        params_df.to_excel(writer, sheet_name='Parameters', index=False)
-    df['Productivity'] = df.apply(lambda row: calculate_productivity(row, stage_columns, response_equation), axis=1)
 
     return df
 

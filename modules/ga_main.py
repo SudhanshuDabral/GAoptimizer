@@ -116,34 +116,109 @@ def ga_optimization_section():
         warnings.simplefilter("always")
 
         try:
-            wells = get_well_details()
-            well_options = {well['well_name']: well['well_id'] for well in wells}
-            
-            selected_wells = st.multiselect("Select Wells", options=list(well_options.keys()), key="ga_well_select")
-            st.session_state.ga_optimizer['selected_wells'] = selected_wells  # Store selected wells
-            selected_well_ids = [well_options[well] for well in selected_wells]
-            
-            if not selected_wells:
-                st.warning("Please select at least one well to proceed.")
-                return
+            # Add data source selection
+            data_source = st.radio(
+                "Select Data Source",
+                ["Database", "Upload File"],
+                horizontal=True,
+                key="data_source"
+            )
 
-            # Add a button to load data for all selected wells
-            if st.button("Load Data for Selected Wells"):
-                with st.spinner("Loading data for selected wells..."):
-                    consolidated_data = fetch_consolidated_data(selected_well_ids)
-                    
-                    if consolidated_data.empty:
-                        st.error("No data available for the selected wells.")
+            if data_source == "Database":
+                wells = get_well_details()
+                well_options = {well['well_name']: well['well_id'] for well in wells}
+                
+                selected_wells = st.multiselect("Select Wells", options=list(well_options.keys()), key="ga_well_select")
+                st.session_state.ga_optimizer['selected_wells'] = selected_wells
+                selected_well_ids = [well_options[well] for well in selected_wells]
+                
+                if not selected_wells:
+                    st.warning("Please select at least one well to proceed.")
+                    return
+
+                # Add a button to load data for all selected wells
+                if st.button("Load Data for Selected Wells"):
+                    with st.spinner("Loading data for selected wells..."):
+                        consolidated_data = fetch_consolidated_data(selected_well_ids)
+                        
+                        if consolidated_data.empty:
+                            st.error("No data available for the selected wells.")
+                            return
+
+                        df = consolidated_data.sort_values(by=['Well Name', 'stage'])
+                        
+                        # Initialize Productivity column if it doesn't exist
+                        if 'Productivity' not in df.columns:
+                            df['Productivity'] = ""
+                        
+                        st.session_state.ga_optimizer['edited_df'] = df
+                        st.success(f"Data loaded for {len(selected_wells)} well(s).")
+            else:  # File Upload
+                uploaded_file = st.file_uploader("Upload Excel/CSV File", type=['xlsx', 'xls', 'csv'])
+                
+                if uploaded_file is not None:
+                    try:
+                        if uploaded_file.name.endswith('.csv'):
+                            df = pd.read_csv(uploaded_file)
+                        else:
+                            df = pd.read_excel(uploaded_file)
+                        
+                        # Make column check case-insensitive
+                        df.columns = df.columns.str.strip()  # Remove any whitespace
+                        column_mapping = {col: col.lower() for col in df.columns}
+                        df = df.rename(columns=column_mapping)
+                        
+                        required_columns = ['well name', 'stage', 'tee', 'median_dhpm', 'median_dp', 
+                                         'downhole_ppm', 'total_dhppm', 'total_slurry_dp', 
+                                         'median_slurry', 'total_dh_prop', 'productivity']
+                        
+                        # Convert actual columns to lowercase for comparison
+                        actual_columns = [col.lower() for col in df.columns]
+                        missing_columns = [col for col in required_columns if col not in actual_columns]
+                        
+                        if missing_columns:
+                            st.error(f"Missing required columns: {', '.join(missing_columns)}")
+                            return
+                        
+                        # Rename columns back to expected format
+                        rename_mapping = {
+                            'well name': 'Well Name',
+                            'stage': 'stage',
+                            'tee': 'tee',
+                            'median_dhpm': 'median_dhpm',
+                            'median_dp': 'median_dp',
+                            'downhole_ppm': 'downhole_ppm',
+                            'total_dhppm': 'total_dhppm',
+                            'total_slurry_dp': 'total_slurry_dp',
+                            'median_slurry': 'median_slurry',
+                            'total_dh_prop': 'total_dh_prop',
+                            'productivity': 'Productivity'
+                        }
+                        df = df.rename(columns=rename_mapping)
+                        
+                        # Ensure Well Name is treated as string
+                        df['Well Name'] = df['Well Name'].astype(str)
+                        # Ensure stage is treated as integer
+                        df['stage'] = pd.to_numeric(df['stage'], errors='coerce').astype('Int64')
+                        
+                        # Sort by Well Name and stage
+                        df = df.sort_values(by=['Well Name', 'stage'])
+                        
+                        # Check if data is already z-scored
+                        is_zscored = st.checkbox("Data is already Z-scored", value=False)
+                        
+                        if is_zscored:
+                            st.session_state.ga_optimizer['zscored_df'] = df
+                            st.session_state.ga_optimizer['zscored_statistics'] = calculate_zscoredf_statistics(df)
+                            st.session_state.ga_optimizer['show_zscore'] = True
+                            st.success("Using uploaded Z-scored data.")
+                        else:
+                            st.session_state.ga_optimizer['edited_df'] = df
+                            st.success("Data uploaded successfully.")
+                            
+                    except Exception as e:
+                        st.error(f"Error reading file: {str(e)}")
                         return
-
-                    df = consolidated_data.sort_values(by=['Well Name', 'stage'])
-                    
-                    # Initialize Productivity column if it doesn't exist
-                    if 'Productivity' not in df.columns:
-                        df['Productivity'] = ""
-                    
-                    st.session_state.ga_optimizer['edited_df'] = df
-                    st.success(f"Data loaded for {len(selected_wells)} well(s).")
 
             # Display the AgGrid only if data has been loaded
             if 'edited_df' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['edited_df'] is not None:
@@ -158,26 +233,29 @@ def ga_optimization_section():
                     st.write("Data Preview (You can edit the Productivity column):")
                     gb = GridOptionsBuilder.from_dataframe(df)
                     gb.configure_column("Productivity", editable=True)
-                    gb.configure_column("Well Name", hide=False)
-                    gb.configure_column("data_id", hide=True)
-                    gb.configure_column("well_id", hide=True)
+                    gb.configure_column("Well Name", hide=False, type=["textColumn"])
+                    gb.configure_column("stage", type=["numericColumn", "numberColumnFilter"])
+                    if 'data_id' in df.columns:
+                        gb.configure_column("data_id", hide=True)
+                    if 'well_id' in df.columns:
+                        gb.configure_column("well_id", hide=True)
                     for col in df.columns:
-                        if col not in ['Productivity', 'Well Name', 'data_id', 'well_id']:
-                            gb.configure_column(col, editable=False)
+                        if col not in ['Productivity', 'Well Name', 'data_id', 'well_id', 'stage']:
+                            gb.configure_column(col, editable=False, type=["numericColumn", "numberColumnFilter"])
                     gb.configure_grid_options(domLayout='normal', 
-                                              suppressMovableColumns=True, 
-                                              enableRangeSelection=True, 
-                                              clipboardDelimiter=',',
-                                              columnSizeDefault=150,
-                                              autoSizeColumns=True)
+                                          suppressMovableColumns=True, 
+                                          enableRangeSelection=True, 
+                                          clipboardDelimiter=',',
+                                          columnSizeDefault=150,
+                                          autoSizeColumns=True)
                     grid_options = gb.build()
                     
                     grid_response = AgGrid(df, 
-                                           gridOptions=grid_options, 
-                                           update_mode=GridUpdateMode.VALUE_CHANGED,
-                                           fit_columns_on_grid_load=True,
-                                           height=400, 
-                                           allow_unsafe_jscode=True)
+                                       gridOptions=grid_options, 
+                                       update_mode=GridUpdateMode.VALUE_CHANGED,
+                                       fit_columns_on_grid_load=True,
+                                       height=400, 
+                                       allow_unsafe_jscode=True)
                     
                     edited_df = pd.DataFrame(grid_response['data'])
                     st.session_state.ga_optimizer['edited_df'] = edited_df
@@ -208,30 +286,32 @@ def ga_optimization_section():
                         gb = GridOptionsBuilder.from_dataframe(st.session_state.ga_optimizer['zscored_df'])
                         gb.configure_selection('multiple', use_checkbox=True)
                         gb.configure_column("Well Name", hide=False)
-                        gb.configure_column("data_id", hide=True)
-                        gb.configure_column("well_id", hide=True)
+                        if 'data_id' in st.session_state.ga_optimizer['zscored_df'].columns:
+                            gb.configure_column("data_id", hide=True)
+                        if 'well_id' in st.session_state.ga_optimizer['zscored_df'].columns:
+                            gb.configure_column("well_id", hide=True)
                         gb.configure_column("tee", checkboxSelection=True, headerCheckboxSelection=True)
                         gb.configure_grid_options(suppressRowClickSelection=True,
-                                                  columnSizeDefault=150,  # Set default column width
-                                                  autoSizeColumns=True)  # Enable auto-sizing
+                                              columnSizeDefault=150,
+                                              autoSizeColumns=True)
                         grid_options = gb.build()
                         
                         grid_response = AgGrid(st.session_state.ga_optimizer['zscored_df'], 
-                                               gridOptions=grid_options,
-                                               update_mode=GridUpdateMode.SELECTION_CHANGED, 
-                                               fit_columns_on_grid_load=True,  # Fit columns on load
-                                               height=400, 
-                                               allow_unsafe_jscode=True)
+                                           gridOptions=grid_options,
+                                           update_mode=GridUpdateMode.SELECTION_CHANGED, 
+                                           fit_columns_on_grid_load=True,
+                                           height=400, 
+                                           allow_unsafe_jscode=True)
                         
                         selected_rows = pd.DataFrame(grid_response['selected_rows'])
                         
                         if not selected_rows.empty:
                             if 'data_id' in selected_rows.columns:
+                                # Use data_id if available
                                 st.session_state.ga_optimizer['excluded_rows'] = selected_rows['data_id'].tolist()
                             else:
-                                # If data_id is not in selected_rows, we need to map the selections back to the original dataframe
-                                selected_indices = [st.session_state.ga_optimizer['zscored_df'].index.get_loc(row['Well Name']) for row in selected_rows.to_dict('records')]
-                                st.session_state.ga_optimizer['excluded_rows'] = st.session_state.ga_optimizer['zscored_df'].iloc[selected_indices]['data_id'].tolist()
+                                # Use Well Name and stage as unique identifier
+                                st.session_state.ga_optimizer['excluded_rows'] = selected_rows[['Well Name', 'stage']].to_dict('records')
                         else:
                             st.session_state.ga_optimizer['excluded_rows'] = []
 
@@ -251,29 +331,29 @@ def ga_optimization_section():
 
                 with st.expander("Feature Selection"):
                     drop_columns = st.multiselect("Select Columns to Drop",
-                                                  [col for col in df.columns if col not in ['Productivity', 'stage', 'data_id', 'well_id', 'Well Name']],
-                                                  help="Choose columns that you do not want to include in the optimization process.")
+                                              [col for col in df.columns if col not in ['Productivity', 'stage', 'data_id', 'well_id', 'Well Name']],
+                                              help="Choose columns that you do not want to include in the optimization process.")
                     predictors = [col for col in df.columns if col not in ['Productivity', 'stage', 'Well Name', 'data_id', 'well_id'] and col not in drop_columns]
 
                 with st.expander("GA Optimizer Parameters", expanded=True):
                     st.session_state.ga_optimizer['r2_threshold'] = st.number_input("R² Threshold", min_value=0.0, max_value=1.0, value=0.55,
-                                                   help="Set the minimum R² value for model acceptance.")
+                                               help="Set the minimum R² value for model acceptance.")
                     coef_range = st.slider("Coefficient Range", -20.0, 20.0, (-10.0, 10.0),
-                                           help="Select the range for the model coefficients.")
+                                       help="Select the range for the model coefficients.")
                     st.session_state.ga_optimizer['prob_crossover'] = st.number_input("Crossover Probability", min_value=0.0, max_value=1.0, value=0.8,
-                                                     help="Set the probability of crossover during genetic algorithm.")
+                                             help="Set the probability of crossover during genetic algorithm.")
                     st.session_state.ga_optimizer['prob_mutation'] = st.number_input("Mutation Probability", min_value=0.0, max_value=1.0, value=0.2,
-                                                   help="Set the probability of mutation during genetic algorithm.")
+                                           help="Set the probability of mutation during genetic algorithm.")
                     st.session_state.ga_optimizer['num_generations'] = st.number_input("Number of Generations", min_value=1, value=40,
-                                                      help="Specify the number of generations for the genetic algorithm to run.")
+                                          help="Specify the number of generations for the genetic algorithm to run.")
                     st.session_state.ga_optimizer['population_size'] = st.number_input("Population Size", min_value=1, value=50,
-                                                      help="Set the size of the population for the genetic algorithm.")
+                                          help="Set the size of the population for the genetic algorithm.")
                     num_models = st.number_input("Number of Models to Generate", min_value=1, max_value=6, value=3,
-                                                 help="Specify the number of models to generate that meet the R² threshold.")
+                                         help="Specify the number of models to generate that meet the R² threshold.")
                     regression_type = st.selectbox("Regression Type",
-                                                   options=["Full Polynomial Regression", "Linear with Interaction Parameters"],
-                                                   index=0,
-                                                   help="Select the type of regression model to use in the optimization process.")
+                                               options=["Full Polynomial Regression", "Linear with Interaction Parameters"],
+                                               index=0,
+                                               help="Select the type of regression model to use in the optimization process.")
                     st.session_state.ga_optimizer['regression_type'] = 'FPR' if regression_type == "Full Polynomial Regression" else 'LWIP'
                     
 
@@ -382,21 +462,35 @@ def display_ga_results():
                         # Calculate number of points to exclude
                         num_points = int(len(errors_df) * error_percentage / 100)
                         
-                        # Get data_ids of points to exclude
-                        new_excluded_ids = sorted_errors.head(num_points)['data_id'].tolist()
-                        
-                        # Update excluded_rows
-                        st.session_state.ga_optimizer['excluded_rows'] = list(set(excluded_rows + new_excluded_ids))
+                        # Get data_ids of points to exclude if available, otherwise use Well Name and stage
+                        if 'data_id' in errors_df.columns:
+                            new_excluded_ids = sorted_errors.head(num_points)['data_id'].tolist()
+                            st.session_state.ga_optimizer['excluded_rows'] = list(set(excluded_rows + new_excluded_ids))
+                        else:
+                            # For uploaded files, use Well Name and stage as identifiers
+                            excluded_points = sorted_errors.head(num_points)[['WellName', 'stage']].to_dict('records')
+                            st.session_state.ga_optimizer['excluded_rows'] = excluded_points
                         
                         # Update zscored table checkboxes
                         if 'zscored_df' in st.session_state.ga_optimizer:
-                            st.session_state.ga_optimizer['zscored_df']['excluded'] = st.session_state.ga_optimizer['zscored_df']['data_id'].isin(st.session_state.ga_optimizer['excluded_rows'])
+                            if 'data_id' in st.session_state.ga_optimizer['zscored_df'].columns:
+                                st.session_state.ga_optimizer['zscored_df']['excluded'] = st.session_state.ga_optimizer['zscored_df']['data_id'].isin(st.session_state.ga_optimizer['excluded_rows'])
+                            else:
+                                # For uploaded files, mark rows based on Well Name and stage
+                                excluded_df = pd.DataFrame(excluded_points)
+                                st.session_state.ga_optimizer['zscored_df']['excluded'] = False
+                                for _, row in excluded_df.iterrows():
+                                    mask = (st.session_state.ga_optimizer['zscored_df']['Well Name'] == row['WellName']) & \
+                                           (st.session_state.ga_optimizer['zscored_df']['stage'] == row['stage'])
+                                    st.session_state.ga_optimizer['zscored_df'].loc[mask, 'excluded'] = True
                         
                         st.success(f"Added {num_points} points with largest errors to excluded rows.")
                         st.rerun()
                     
                     st.write("Error Table for Individual Data Points")
-                    errors_df_display = errors_df.drop(columns=['data_id', 'well_id'])
+                    # Drop data_id and well_id columns if they exist
+                    display_columns = [col for col in errors_df.columns if col not in ['data_id', 'well_id']]
+                    errors_df_display = errors_df[display_columns]
                     st.dataframe(errors_df_display, use_container_width=True, hide_index=True)
 
                     st.write("Actual vs Predicted Productivity Plot")
@@ -498,7 +592,9 @@ def display_ga_results():
                         pd.DataFrame([best_ind]).to_excel(writer, sheet_name=f'Model_{i+1}_Best_Individual')
                         pd.DataFrame([{'R² Score': weighted_r2_score, 'Response Equation': response_equation}]).to_excel(writer, sheet_name=f'Model_{i+1}_Details')
                         pd.DataFrame(selected_feature_names, columns=['Selected Features']).to_excel(writer, sheet_name=f'Model_{i+1}_Features')
-                        errors_df.to_excel(writer, sheet_name=f'Model_{i+1}_Errors')
+                        # Drop data_id and well_id columns if they exist
+                        display_columns = [col for col in errors_df.columns if col not in ['data_id', 'well_id']]
+                        errors_df[display_columns].to_excel(writer, sheet_name=f'Model_{i+1}_Errors')
 
                 with open('genetic_algorithm_results.xlsx', 'rb') as file:
                     st.download_button(
@@ -536,6 +632,7 @@ def monotonicity_check_modal():
     st.markdown('<hr class="section-partition">', unsafe_allow_html=True)
     st.markdown("## Monotonicity Check")
 
+    # Always use database data for well and stage selection
     wells = get_well_details()
     well_options = {well['well_name']: well['well_id'] for well in wells}
     selected_well = st.selectbox("Select a Well", options=list(well_options.keys()), key="monotonicity_well_select")
@@ -595,7 +692,8 @@ def monotonicity_check_modal():
         elif not selected_stages:
             st.error("Please select at least one stage for monotonicity check.")
         else:
-            run_monotonicity_check(well_id, selected_stages, equation_to_use)        
+            # Always use database data for monotonicity check
+            run_monotonicity_check(well_id, selected_stages, equation_to_use)
     
     # Store the plots in session state if they don't exist
     if 'monotonicity_plots' not in st.session_state:
@@ -671,6 +769,7 @@ def run_monotonicity_check(well_id, selected_stages, equation_to_use):
 def sensitivity_test_section():
     st.markdown("## Sensitivity Test")
 
+   
     # Initialize session state for storing results
     if 'sensitivity_results' not in st.session_state:
         st.session_state.sensitivity_results = {
@@ -916,7 +1015,18 @@ def sensitivity_test_section():
 # Genetic Algorithm Optimization
 def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, excluded_rows, regression_type, num_models):
     full_zscored_df = df.copy()
-    df = df[~df['data_id'].isin(excluded_rows)]
+    
+    # Filter out excluded rows based on the format of excluded_rows
+    if excluded_rows:
+        if isinstance(excluded_rows[0], dict):  # Using Well Name and stage
+            # Create a mask for rows to exclude based on Well Name and stage
+            mask = pd.Series(False, index=df.index)
+            for excluded_row in excluded_rows:
+                mask |= (df['Well Name'] == excluded_row['Well Name']) & (df['stage'] == excluded_row['stage'])
+            df = df[~mask]
+        else:  # Using data_id
+            if 'data_id' in df.columns:
+                df = df[~df['data_id'].isin(excluded_rows)]
 
     #add predictors to session state variable for model saving
     st.session_state.ga_optimizer['predictors'] = predictors
