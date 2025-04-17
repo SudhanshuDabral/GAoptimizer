@@ -91,8 +91,41 @@ def check_monotonicity(array_data, df_statistics, response_equation):
     stage_columns = ['tee_stage', 'median_dhpm_stage', 'median_dp_stage', 'downhole_ppm_stage', 
                      'total_dhppm_stage', 'total_slurry_dp_stage', 'median_slurry_stage', 'total_dh_prop_stage']
     
+    # Highlight key attributes that have higher precedence
+    key_stage_columns = ['downhole_ppm_stage', 'total_dhppm_stage', 'tee_stage']
+    
     # Calculate Productivity using the provided equation
     df['Productivity'] = df.apply(lambda row: calculate_productivity(row, stage_columns, response_equation), axis=1)
+    
+    # Add additional metrics to check monotonicity specifically for key attributes
+    for key_col in key_stage_columns:
+        # Calculate monotonicity metrics
+        sorted_df = df.sort_values(key_col)
+        monotonic_increases = 0
+        monotonic_decreases = 0
+        non_monotonic_count = 0
+        
+        prev_prod = sorted_df.iloc[0]['Productivity']
+        for i in range(1, len(sorted_df)):
+            curr_prod = sorted_df.iloc[i]['Productivity']
+            if curr_prod > prev_prod:
+                monotonic_increases += 1
+            elif curr_prod == prev_prod:
+                # Still monotonic but not strictly increasing
+                monotonic_increases += 1
+            else:
+                # Not monotonically increasing
+                non_monotonic_count += 1
+            prev_prod = curr_prod
+        
+        # For key attributes, we specifically want INCREASING monotonicity
+        monotonic_percent = monotonic_increases / (len(sorted_df) - 1) * 100
+        
+        # Store monotonicity metrics
+        metric_name = key_col.replace('_stage', '')
+        df[f"{metric_name}_monotonicity_pct"] = monotonic_percent
+        df[f"{metric_name}_monotonicity_dir"] = "increasing" if monotonic_percent >= 75 else "not consistently increasing"
+        df[f"{metric_name}_non_monotonic_pct"] = non_monotonic_count / (len(sorted_df) - 1) * 100
     
     # Export stage columns and parameters to separate sheets
     stage_df = df[stage_columns].copy()

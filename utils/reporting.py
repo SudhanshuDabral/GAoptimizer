@@ -409,12 +409,40 @@ def generate_monotonicity_pdf_report(plots_data, user_id, well_name=None, model_
             rightIndent=36,
             spaceAfter=30
         ))
+        styles.add(ParagraphStyle(
+            name='KeyAttributeAlert',
+            parent=styles['Normal'],
+            fontSize=14,
+            textColor=colors.red,
+            spaceAfter=10
+        ))
+        styles.add(ParagraphStyle(
+            name='KeyAttributeValid',
+            parent=styles['Normal'],
+            fontSize=14,
+            textColor=colors.green,
+            spaceAfter=10
+        ))
         
         elements = []
         
         # Cover Page
         elements.append(Paragraph("Monotonicity Analysis Report", styles['CoverTitle']))
         elements.append(Spacer(1, 20))
+        
+        # Add description of what monotonicity means
+        elements.append(Paragraph("Monotonicity Analysis Overview:", styles['Heading2']))
+        elements.append(Paragraph(
+            "This report analyzes the monotonic behavior of the model - whether productivity consistently increases as key attributes increase. "
+            "For hydraulic fracturing, we expect that increasing certain key parameters should lead to increased productivity.", 
+            styles['Normal']))
+        elements.append(Paragraph(
+            "Key attributes of interest are:", 
+            styles['Normal']))
+        elements.append(Paragraph("• downhole_ppm - Downhole Proppant Concentration", styles['Normal']))
+        elements.append(Paragraph("• total_dhppm - Total Downhole Proppant per Minute", styles['Normal']))
+        elements.append(Paragraph("• tee - Treating Effective Energy", styles['Normal']))
+        elements.append(Spacer(1, 12))
         
         if well_name:
             elements.append(Paragraph(f"Well Name: {well_name}", styles['WellName']))
@@ -457,6 +485,74 @@ def generate_monotonicity_pdf_report(plots_data, user_id, well_name=None, model_
             elements.append(Paragraph(f"Stage {stage}", styles['Heading2']))
             elements.append(Spacer(1, 12))
             
+            # Check for key attribute monotonicity data if available in the result_df object
+            # The plot_data is the Figure, but we need to check if there's raw data available
+            if hasattr(plot_data, '_data_obj') and hasattr(plot_data._data_obj, 'result_df'):
+                result_df = plot_data._data_obj.result_df
+                key_attributes = ['downhole_ppm', 'total_dhppm', 'tee']
+                
+                # Create a table for key attributes monotonicity
+                monotonicity_data = []
+                header_row = ['Attribute', 'Monotonicity %', 'Direction', 'Status']
+                monotonicity_data.append(header_row)
+                
+                for attr in key_attributes:
+                    pct_col = f"{attr}_monotonicity_pct"
+                    dir_col = f"{attr}_monotonicity_dir"
+                    
+                    if pct_col in result_df.columns and dir_col in result_df.columns:
+                        # Get the first non-null value
+                        pct_values = result_df[pct_col].dropna()
+                        dir_values = result_df[dir_col].dropna()
+                        
+                        if not pct_values.empty and not dir_values.empty:
+                            pct = pct_values.iloc[0]
+                            direction = dir_values.iloc[0]
+                            status = "✓ VALID" if direction == "increasing" and pct >= 75 else "✗ INVALID"
+                            
+                            monotonicity_data.append([
+                                attr,
+                                f"{pct:.1f}%",
+                                direction,
+                                status
+                            ])
+                
+                if len(monotonicity_data) > 1:  # If we have data beyond the header
+                    # Create a table with the data
+                    table = Table(monotonicity_data)
+                    # Style the table
+                    table_style = TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                    ])
+                    
+                    # Add additional styling for valid/invalid status
+                    for i, row in enumerate(monotonicity_data[1:], 1):
+                        if "VALID" in row[-1]:
+                            table_style.add('TEXTCOLOR', (3, i), (3, i), colors.green)
+                        else:
+                            table_style.add('TEXTCOLOR', (3, i), (3, i), colors.red)
+                    
+                    table.setStyle(table_style)
+                    elements.append(table)
+                    elements.append(Spacer(1, 12))
+                
+                # Add summary of monotonicity check
+                valid_count = sum(1 for row in monotonicity_data[1:] if "VALID" in row[-1])
+                total_count = len(monotonicity_data) - 1  # Subtract header row
+                
+                if valid_count == total_count:
+                    elements.append(Paragraph("✅ All key attributes show proper increasing monotonic behavior.", styles['KeyAttributeValid']))
+                else:
+                    elements.append(Paragraph(f"⚠️ Only {valid_count} out of {total_count} key attributes show proper increasing monotonic behavior.", styles['KeyAttributeAlert']))
+                
+                elements.append(Spacer(1, 12))
+            
             try:
                 img_path = save_plot_as_image(plot_data, f"monotonicity_stage_{stage}", user_id)
                 img = Image(img_path, width=10*inch, height=5.6*inch)
@@ -465,8 +561,45 @@ def generate_monotonicity_pdf_report(plots_data, user_id, well_name=None, model_
                 log_message(logging.ERROR, f"Error adding plot for Stage {stage} to PDF: {str(e)}", exc_info=True)
                 elements.append(Paragraph(f"Error including plot for Stage {stage}: {str(e)}", styles['Normal']))
             
+            # Add individual plots for key attributes if available
+            if hasattr(plot_data, '_data_obj') and hasattr(plot_data._data_obj, 'key_attr_plots'):
+                key_attr_plots = plot_data._data_obj.key_attr_plots
+                
+                for attr, attr_plot in key_attr_plots.items():
+                    try:
+                        elements.append(Paragraph(f"Monotonicity Analysis for {attr}", styles['Heading3']))
+                        img_path = save_plot_as_image(attr_plot, f"monotonicity_{attr}_stage_{stage}", user_id)
+                        img = Image(img_path, width=10*inch, height=5.6*inch)
+                        elements.append(img)
+                    except Exception as e:
+                        log_message(logging.ERROR, f"Error adding {attr} plot for Stage {stage} to PDF: {str(e)}", exc_info=True)
+            
             elements.append(Spacer(1, 12))
             elements.append(PageBreak())
+        
+        # Add a summary page at the end
+        elements.append(Paragraph("Summary of Monotonicity Analysis", styles['Heading1']))
+        elements.append(Spacer(1, 12))
+        
+        elements.append(Paragraph(
+            "Monotonicity Check Interpretation:", 
+            styles['Heading3']))
+        
+        elements.append(Paragraph(
+            "• A monotonic relationship means productivity should consistently increase (or consistently decrease) as an attribute increases.", 
+            styles['Normal']))
+        
+        elements.append(Paragraph(
+            "• For hydraulic fracturing models, we specifically want to see that productivity increases as key attributes increase.", 
+            styles['Normal']))
+        
+        elements.append(Paragraph(
+            "• A model with proper monotonicity is more physically realistic and reliable for operational decisions.", 
+            styles['Normal']))
+        
+        elements.append(Paragraph(
+            "• Non-monotonic behavior may indicate issues with the model or unexpected physical phenomena that should be investigated.", 
+            styles['Normal']))
         
         # Build the PDF
         log_message(logging.DEBUG, "Building PDF")

@@ -2,6 +2,7 @@ import warnings
 import contextlib
 import streamlit as st
 import pandas as pd
+import numpy as np
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from utils.db import (get_well_details, get_modeling_data,
                        get_well_stages, get_array_data, insert_ga_model)
@@ -19,7 +20,6 @@ from utils.ga_utils import (zscore_data, calculate_df_statistics,
 from utils.reporting import generate_pdf_report, generate_ppt_report, generate_monotonicity_pdf_report
 import time
 import os
-import numpy as np
 
 
 # Set up logging
@@ -152,6 +152,7 @@ def ga_optimization_section():
                             df['Productivity'] = ""
                         
                         st.session_state.ga_optimizer['edited_df'] = df
+                        st.session_state.ga_optimizer['df_statistics'] = calculate_df_statistics(df)
                         st.success(f"Data loaded for {len(selected_wells)} well(s).")
             else:  # File Upload
                 uploaded_file = st.file_uploader("Upload Excel/CSV File", type=['xlsx', 'xls', 'csv'])
@@ -204,17 +205,10 @@ def ga_optimization_section():
                         # Sort by Well Name and stage
                         df = df.sort_values(by=['Well Name', 'stage'])
                         
-                        # Check if data is already z-scored
-                        is_zscored = st.checkbox("Data is already Z-scored", value=False)
-                        
-                        if is_zscored:
-                            st.session_state.ga_optimizer['zscored_df'] = df
-                            st.session_state.ga_optimizer['zscored_statistics'] = calculate_zscoredf_statistics(df)
-                            st.session_state.ga_optimizer['show_zscore'] = True
-                            st.success("Using uploaded Z-scored data.")
-                        else:
-                            st.session_state.ga_optimizer['edited_df'] = df
-                            st.success("Data uploaded successfully.")
+                        # Store the uploaded data and calculate statistics
+                        st.session_state.ga_optimizer['edited_df'] = df
+                        st.session_state.ga_optimizer['df_statistics'] = calculate_df_statistics(df)
+                        st.success("Data uploaded successfully.")
                             
                     except Exception as e:
                         st.error(f"Error reading file: {str(e)}")
@@ -340,6 +334,9 @@ def ga_optimization_section():
                                                help="Set the minimum R² value for model acceptance.")
                     coef_range = st.slider("Coefficient Range", -20.0, 20.0, (-10.0, 10.0),
                                        help="Select the range for the model coefficients.")
+                    monotonicity_target = st.slider("Monotonicity Target (%)", min_value=0, max_value=100, value=90,
+                                      help="Target percentage of monotonic behavior across features (higher values enforce more monotonic models)")
+                    st.session_state.ga_optimizer['monotonicity_target'] = monotonicity_target / 100.0
                     st.session_state.ga_optimizer['prob_crossover'] = st.number_input("Crossover Probability", min_value=0.0, max_value=1.0, value=0.8,
                                              help="Set the probability of crossover during genetic algorithm.")
                     st.session_state.ga_optimizer['prob_mutation'] = st.number_input("Mutation Probability", min_value=0.0, max_value=1.0, value=0.2,
@@ -368,14 +365,16 @@ def ga_optimization_section():
                                                 coef_range, st.session_state.ga_optimizer['prob_crossover'], st.session_state.ga_optimizer['prob_mutation'], 
                                                 st.session_state.ga_optimizer['num_generations'], st.session_state.ga_optimizer['population_size'],
                                                 st.session_state.ga_optimizer['excluded_rows'],
-                                                st.session_state.ga_optimizer['regression_type'], num_models)
+                                                st.session_state.ga_optimizer['regression_type'], num_models,
+                                                st.session_state.ga_optimizer['monotonicity_target'])
 
                 if st.session_state.ga_optimizer['running']:
                     start_ga_optimization(st.session_state.ga_optimizer['zscored_df'], 'Productivity', predictors, st.session_state.ga_optimizer['r2_threshold'],
                                           coef_range, st.session_state.ga_optimizer['prob_crossover'], st.session_state.ga_optimizer['prob_mutation'], 
                                           st.session_state.ga_optimizer['num_generations'], st.session_state.ga_optimizer['population_size'],
                                           st.session_state.ga_optimizer['excluded_rows'],
-                                          st.session_state.ga_optimizer['regression_type'], num_models)
+                                          st.session_state.ga_optimizer['regression_type'], num_models,
+                                          st.session_state.ga_optimizer['monotonicity_target'])
 
                 if st.session_state.ga_optimizer['results']:
                     display_ga_results()
@@ -438,6 +437,105 @@ def display_ga_results():
                 st.subheader(f"Model {i+1}")
                 st.write(f"Weighted R² Score (Train/Test): {weighted_r2_score:.4f}")
                 st.write(f"Full Dataset R² Score: {full_dataset_r2:.4f}")
+                
+                # Add monotonicity information if available
+                if hasattr(best_ind, 'monotonicity_percent'):
+                    monotonicity_pct = best_ind.monotonicity_percent * 100
+                    st.write(f"Model Monotonicity: {monotonicity_pct:.1f}%")
+                    
+                    # Add visual indicator for monotonicity
+                    if monotonicity_pct >= 90:
+                        st.success("✅ This model meets the 90% monotonicity target")
+                    elif monotonicity_pct >= 75:
+                        st.info("ℹ️ This model has good monotonicity but doesn't meet the 90% target")
+                    else:
+                        st.warning("⚠️ This model has low monotonicity")
+                    
+                    # Show key attribute monotonicity if available
+                    if hasattr(best_ind, 'key_attr_monotonicity') and best_ind.key_attr_monotonicity:
+                        st.write("### Key Attribute Monotonicity")
+                        st.info("For hydraulic fracturing, productivity should increase as these key attributes increase.")
+                        key_attrs = best_ind.key_attr_monotonicity
+                        
+                        # Create a table for key attributes monotonicity
+                        key_attr_data = []
+                        for attr, info in key_attrs.items():
+                            monotonicity_pct = info['monotonic_percent'] * 100
+                            strict_pct = info.get('strict_monotonic_percent', 0) * 100
+                            direction = info['direction']
+                            
+                            # For key attributes, we need INCREASING monotonicity
+                            is_valid = direction == "increasing" and monotonicity_pct >= 90
+                            
+                            key_attr_data.append({
+                                "Attribute": attr,
+                                "Monotonicity": f"{monotonicity_pct:.1f}%",
+                                "Strictly Increasing": f"{strict_pct:.1f}%" if 'strict_monotonic_percent' in info else "N/A",
+                                "Direction": direction.capitalize(),
+                                "Valid": "✅ Yes" if is_valid else "❌ No"
+                            })
+                        
+                        # Display as a dataframe
+                        if key_attr_data:
+                            key_attr_df = pd.DataFrame(key_attr_data)
+                            st.dataframe(key_attr_df, use_container_width=True, hide_index=True)
+                            
+                            # Count valid relationships
+                            valid_count = sum(1 for item in key_attr_data if "Yes" in item["Valid"])
+                            total_count = len(key_attr_data)
+                            
+                            if valid_count == total_count:
+                                st.success(f"✅ All {total_count} key attributes have increasing monotonic relationships with productivity.")
+                            else:
+                                st.warning(f"⚠️ Only {valid_count} out of {total_count} key attributes have properly increasing monotonic relationships with productivity.")
+                            
+                            # Add a button to show detailed plots for key attributes
+                            if st.button("Show Key Attribute Plots", key=f"key_attr_plots_{i}"):
+                                for attr, info in key_attrs.items():
+                                    test_points = info['test_points']
+                                    predictions = info['predictions']
+                                    monotonicity_pct = info['monotonic_percent'] * 100
+                                    direction = info['direction']
+                                    
+                                    # Create a plot for this attribute
+                                    import plotly.graph_objects as go
+                                    fig = go.Figure()
+                                    fig.add_trace(go.Scatter(
+                                        x=test_points, 
+                                        y=predictions,
+                                        mode='lines+markers',
+                                        name=f"{attr} vs Productivity"
+                                    ))
+                                    
+                                    # Add trendline
+                                    import numpy as np
+                                    z = np.polyfit(test_points, predictions, 1)
+                                    p = np.poly1d(z)
+                                    fig.add_trace(go.Scatter(
+                                        x=test_points,
+                                        y=p(test_points),
+                                        mode='lines',
+                                        name='Trend Line',
+                                        line=dict(color='red', dash='dash')
+                                    ))
+                                    
+                                    fig.update_layout(
+                                        title=f"{attr} Monotonicity: {monotonicity_pct:.1f}% ({direction})",
+                                        xaxis_title=attr,
+                                        yaxis_title="Predicted Productivity",
+                                        hovermode="x unified"
+                                    )
+                                    
+                                    st.plotly_chart(fig, use_container_width=True)
+                                    
+                                    # Add explanation of monotonicity
+                                    non_monotonic = info.get('non_monotonic_count', 0)
+                                    if non_monotonic > 0:
+                                        st.warning(f"Found {non_monotonic} points where productivity decreases as {attr} increases.")
+                                        st.write("For optimal hydraulic fracturing models, productivity should consistently increase with this attribute.")
+                                    else:
+                                        st.success(f"Perfect monotonicity! Productivity consistently increases as {attr} increases.")
+                
                 st.code(response_equation, language='text')
                 
                 with st.expander("Show Details"):
@@ -500,6 +598,7 @@ def display_ga_results():
                     # Model Sensitivity Analysis
                     st.write("Model Sensitivity Analysis")
                     try:
+                        import numpy as np  # Ensure numpy is available in this scope
                         baseline_productivity, sensitivity_df = calculate_model_sensitivity(response_equation, st.session_state.ga_optimizer['zscored_statistics'])
                         
                         if baseline_productivity is not None and not np.isclose(baseline_productivity, 0, atol=1e-10):
@@ -550,6 +649,11 @@ def display_ga_results():
                                 'regression_type': st.session_state.ga_optimizer['regression_type'],
                                 'feature_selection': selected_feature_names
                             }
+                            
+                            # Add monotonicity information if available
+                            if hasattr(best_ind, 'monotonicity_percent'):
+                                ga_params['monotonicity'] = best_ind.monotonicity_percent
+                                
                             ga_results = {
                                 'response_equation': response_equation,
                                 'best_r2_score': weighted_r2_score,
@@ -589,8 +693,17 @@ def display_ga_results():
                     for i, result in enumerate(st.session_state.ga_optimizer['results']):
                         best_ind, weighted_r2_score, response_equation, selected_feature_names, errors_df, predicted_values, zscored_df, excluded_rows, full_dataset_r2 = result
                         
-                        pd.DataFrame([best_ind]).to_excel(writer, sheet_name=f'Model_{i+1}_Best_Individual')
-                        pd.DataFrame([{'R² Score': weighted_r2_score, 'Response Equation': response_equation}]).to_excel(writer, sheet_name=f'Model_{i+1}_Details')
+                        # Add monotonicity information to Excel if available
+                        model_info = {
+                            'R² Score': weighted_r2_score, 
+                            'Full Dataset R²': full_dataset_r2,
+                            'Response Equation': response_equation
+                        }
+                        
+                        if hasattr(best_ind, 'monotonicity_percent'):
+                            model_info['Monotonicity (%)'] = best_ind.monotonicity_percent * 100
+                        
+                        pd.DataFrame([model_info]).to_excel(writer, sheet_name=f'Model_{i+1}_Details')
                         pd.DataFrame(selected_feature_names, columns=['Selected Features']).to_excel(writer, sheet_name=f'Model_{i+1}_Features')
                         # Drop data_id and well_id columns if they exist
                         display_columns = [col for col in errors_df.columns if col not in ['data_id', 'well_id']]
@@ -712,6 +825,108 @@ def monotonicity_check_modal():
             else:
                 fig = plot_column(result_df, stage)
                 st.plotly_chart(fig, use_container_width=True)
+                
+                # Display key attribute monotonicity metrics if available
+                key_attributes = ['downhole_ppm', 'total_dhppm', 'tee']
+                key_metrics = [col for col in result_df.columns if any(f"{attr}_monotonicity_pct" in col for attr in key_attributes)]
+                
+                if key_metrics:
+                    st.subheader(f"Key Attribute Monotonicity for Stage {stage}")
+                    
+                    # Create metrics table
+                    metrics_data = []
+                    for attr in key_attributes:
+                        pct_col = f"{attr}_monotonicity_pct"
+                        dir_col = f"{attr}_monotonicity_dir"
+                        
+                        if pct_col in result_df.columns and dir_col in result_df.columns:
+                            # Get the first non-null value
+                            pct_values = result_df[pct_col].dropna()
+                            dir_values = result_df[dir_col].dropna()
+                            
+                            if not pct_values.empty and not dir_values.empty:
+                                metrics_data.append({
+                                    "Attribute": attr,
+                                    "Monotonicity": f"{pct_values.iloc[0]:.1f}%",
+                                    "Direction": dir_values.iloc[0].capitalize(),
+                                    "Meets Target": "Yes" if pct_values.iloc[0] >= 90 else "No"
+                                })
+                    
+                    if metrics_data:
+                        metrics_df = pd.DataFrame(metrics_data)
+                        st.dataframe(metrics_df, use_container_width=True, hide_index=True)
+                        
+                        # Create individual plots for each key attribute
+                        for attr in key_attributes:
+                            attr_col = f"{attr}_stage"
+                            if attr_col in result_df.columns:
+                                # Create a plot showing relationship between attribute and productivity
+                                import plotly.graph_objects as go
+                                sorted_df = result_df.sort_values(attr_col)
+                                
+                                fig = go.Figure()
+                                fig.add_trace(go.Scatter(
+                                    x=sorted_df[attr_col],
+                                    y=sorted_df['Productivity'],
+                                    mode='lines+markers',
+                                    name=f"{attr} vs Productivity"
+                                ))
+                                
+                                # Add trend line
+                                # Calculate linear fit
+                                import numpy as np
+                                z = np.polyfit(sorted_df[attr_col], sorted_df['Productivity'], 1)
+                                p = np.poly1d(z)
+                                
+                                # Check if trend is positive or negative
+                                trend_slope = z[0]
+                                trend_color = 'green' if trend_slope > 0 else 'red'
+                                
+                                fig.add_trace(go.Scatter(
+                                    x=sorted_df[attr_col],
+                                    y=p(sorted_df[attr_col]),
+                                    mode='lines',
+                                    name='Trend Line',
+                                    line=dict(color=trend_color, dash='dash')
+                                ))
+                                
+                                # Get monotonicity metrics
+                                pct_col = f"{attr}_monotonicity_pct"
+                                dir_col = f"{attr}_monotonicity_dir"
+                                non_mono_col = f"{attr}_non_monotonic_pct"
+                                
+                                monotonicity_text = ""
+                                if pct_col in result_df.columns and dir_col in result_df.columns:
+                                    pct_values = result_df[pct_col].dropna()
+                                    dir_values = result_df[dir_col].dropna()
+                                    
+                                    if not pct_values.empty and not dir_values.empty:
+                                        monotonicity_text = f"Monotonicity: {pct_values.iloc[0]:.1f}% ({dir_values.iloc[0]})"
+                                
+                                fig.update_layout(
+                                    title=f"Stage {stage}: {attr} vs Productivity - {monotonicity_text}",
+                                    xaxis_title=attr,
+                                    yaxis_title="Productivity",
+                                    hovermode="x unified"
+                                )
+                                
+                                st.plotly_chart(fig, use_container_width=True)
+                                
+                                # Add explanation based on trend direction
+                                if trend_slope > 0:
+                                    st.success(f"✅ The overall trend shows productivity increasing with {attr}, which is the physically expected behavior.")
+                                else:
+                                    st.error(f"❌ The overall trend shows productivity decreasing with {attr}, which is contrary to the expected physical behavior in hydraulic fracturing.")
+                                
+                                # Show non-monotonic percentage if available
+                                if non_mono_col in result_df.columns:
+                                    non_mono_values = result_df[non_mono_col].dropna()
+                                    if not non_mono_values.empty:
+                                        non_mono_pct = non_mono_values.iloc[0]
+                                        if non_mono_pct > 0:
+                                            st.warning(f"Found {non_mono_pct:.1f}% of points where productivity decreases as {attr} increases.")
+                                            st.write("For optimal hydraulic fracturing models, productivity should consistently increase with this attribute.")
+                
                 # Store the plot in session state
                 st.session_state.monotonicity_plots[stage] = fig
         
@@ -1013,7 +1228,7 @@ def sensitivity_test_section():
 
 
 # Genetic Algorithm Optimization
-def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, excluded_rows, regression_type, num_models):
+def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, excluded_rows, regression_type, num_models, monotonicity_target):
     full_zscored_df = df.copy()
     
     # Filter out excluded rows based on the format of excluded_rows
@@ -1057,7 +1272,8 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
                     st.session_state.continuous_optimization['iterations'],
                     st.session_state.continuous_optimization['model_markers'],
                     plot_placeholder,
-                    st.session_state.continuous_optimization['current_iteration']
+                    st.session_state.continuous_optimization['current_iteration'],
+                    monotonicity_target
                 )
                 if w:
                     for warning in w:

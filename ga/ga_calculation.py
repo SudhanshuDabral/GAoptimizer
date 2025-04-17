@@ -38,7 +38,185 @@ if 'FitnessMax' not in creator.__dict__:
 if 'Individual' not in creator.__dict__:
     creator.create("Individual", list, fitness=creator.FitnessMax)
 
-def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, timer_placeholder, regression_type, model_number, r2_values, iterations, model_markers, plot_placeholder, start_iteration):
+def check_key_attributes_monotonicity(model, X, feature_names, selected_features):
+    """
+    Check monotonicity specifically for key hydraulic fracturing attributes:
+    - downhole_ppm
+    - total_dhppm
+    - tee
+    
+    Returns: dictionary with monotonicity scores for each key attribute,
+    specifically checking for INCREASING monotonicity (productivity should
+    increase as these attributes increase)
+    """
+    try:
+        # Number of test points to check monotonicity
+        n_points = 100
+        key_attributes = ['downhole_ppm', 'total_dhppm', 'tee']
+        results = {}
+        
+        # Get feature indices
+        feature_indices = selected_features
+        
+        # For each feature, check monotonicity
+        for feat_idx in feature_indices:
+            feature_name = feature_names[feat_idx]
+            
+            # Only check key attributes
+            base_feature = feature_name.split()[0] if ' ' in feature_name else feature_name
+            if base_feature not in key_attributes:
+                continue
+                
+            # Get min and max values for the feature
+            feat_min = X[:, feat_idx].min()
+            feat_max = X[:, feat_idx].max()
+            
+            # Generate test points
+            test_points = np.linspace(feat_min, feat_max, n_points)
+            
+            # For each point pair, check if productivity changes monotonically
+            reference_point = X.mean(axis=0)
+            
+            prev_pred = None
+            monotonic_increases = 0
+            monotonic_strict_increases = 0
+            non_monotonic_count = 0
+            predictions = []
+            
+            for point in test_points:
+                test_point = reference_point.copy()
+                test_point[feat_idx] = point
+                
+                # Filter to include only selected features
+                test_point_filtered = test_point[feature_indices]
+                
+                # Get prediction
+                prediction = model.predict(test_point_filtered.reshape(1, -1))[0]
+                predictions.append(prediction)
+                
+                if prev_pred is not None:
+                    if prediction > prev_pred:
+                        monotonic_strict_increases += 1
+                        monotonic_increases += 1
+                    elif prediction == prev_pred:
+                        # Still monotonic but not strictly increasing
+                        monotonic_increases += 1
+                    else:
+                        # Not monotonically increasing
+                        non_monotonic_count += 1
+                
+                prev_pred = prediction
+            
+            # Check if monotonically increasing
+            tests = n_points - 1  # Number of point pairs
+            monotonic_percent = monotonic_increases / tests
+            strict_monotonic_percent = monotonic_strict_increases / tests
+            
+            # We only care about INCREASING monotonicity for these key attributes
+            results[feature_name] = {
+                'monotonic_percent': monotonic_percent,
+                'strict_monotonic_percent': strict_monotonic_percent,
+                'direction': "increasing" if monotonic_strict_increases > (tests / 2) else "not consistently increasing",
+                'test_points': test_points,
+                'predictions': predictions,
+                'non_monotonic_count': non_monotonic_count
+            }
+        
+        return results
+    
+    except Exception as e:
+        log_message(logging.WARNING, f"Error in key attributes monotonicity check: {str(e)}")
+        return {}
+
+def check_monotonicity_percent(model, X, feature_names, selected_features, prioritize_key_attributes=True):
+    """
+    Check what percentage of the feature space exhibits monotonic behavior
+    for the given model with respect to each feature.
+    
+    For key attributes, we specifically check for INCREASING monotonicity.
+    
+    Returns: float between 0 and 1 representing the overall monotonicity percentage
+    """
+    try:
+        # Number of test points to check monotonicity
+        n_points = 100
+        monotonic_count = 0
+        total_tests = 0
+        
+        # Key attributes to prioritize if enabled
+        key_attributes = ['downhole_ppm', 'total_dhppm', 'tee']
+        key_attribute_weight = 2.0  # Weight for key attributes
+        
+        # Get feature indices
+        feature_indices = selected_features
+        
+        # For each feature, check monotonicity
+        for i, feat_idx in enumerate(feature_indices):
+            feature_name = feature_names[feat_idx]
+            
+            # Skip interaction terms for monotonicity check (they contain spaces)
+            if ' ' in feature_name:
+                continue
+                
+            # Determine if this is a key attribute
+            is_key_attribute = feature_name in key_attributes
+            
+            # Get min and max values for the feature
+            feat_min = X[:, feat_idx].min()
+            feat_max = X[:, feat_idx].max()
+            
+            # Generate test points
+            test_points = np.linspace(feat_min, feat_max, n_points)
+            
+            # For each point pair, check if productivity changes monotonically
+            reference_point = X.mean(axis=0)
+            
+            prev_pred = None
+            monotonic_increases = 0
+            monotonic_decreases = 0
+            
+            for point in test_points:
+                test_point = reference_point.copy()
+                test_point[feat_idx] = point
+                
+                # Filter to include only selected features
+                test_point_filtered = test_point[feature_indices]
+                
+                # Get prediction
+                prediction = model.predict(test_point_filtered.reshape(1, -1))[0]
+                
+                if prev_pred is not None:
+                    if prediction >= prev_pred:
+                        monotonic_increases += 1
+                    if prediction <= prev_pred:
+                        monotonic_decreases += 1
+                
+                prev_pred = prediction
+            
+            # For key attributes, we specifically want INCREASING monotonicity
+            if is_key_attribute:
+                monotonic_percent = monotonic_increases / (n_points - 1)
+            else:
+                # For other attributes, we accept either increasing or decreasing
+                monotonic_percent = max(monotonic_increases, monotonic_decreases) / (n_points - 1)
+            
+            feature_weight = key_attribute_weight if prioritize_key_attributes and is_key_attribute else 1.0
+            
+            if monotonic_percent >= 0.9:  # Allow 90% monotonicity for this feature
+                monotonic_count += feature_weight
+            
+            total_tests += feature_weight
+        
+        # Return overall monotonicity percentage across all features
+        if total_tests == 0:
+            return 0.0
+        return monotonic_count / total_tests
+    
+    except Exception as e:
+        log_message(logging.WARNING, f"Error in monotonicity check: {str(e)}")
+        return 0.0
+
+def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, timer_placeholder, regression_type, model_number, r2_values, iterations, model_markers, plot_placeholder, start_iteration, monotonicity_target=0.9):
     log_message(logging.INFO, f"Starting GA optimization for Model {model_number + 1}")
     with warnings.catch_warnings(record=True) as caught_warnings:
         warnings.simplefilter("always")
@@ -93,13 +271,31 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
                 penalty = sum([max(0, coef - coef_range[1]) + max(0, coef_range[0] - coef) for coef in coefficients])
                 penalty_factor = 0.01
 
-                penalized_score = weighted_score - penalty * penalty_factor
+                # Check monotonicity and apply penalty if needed
+                monotonicity_percent = check_monotonicity_percent(model, X_poly, feature_names, features)
+                monotonicity_penalty = max(0, monotonicity_target - monotonicity_percent) * 0.5
+                
+                # Check key attributes monotonicity
+                key_attr_results = check_key_attributes_monotonicity(model, X_poly, feature_names, features)
+                
+                # Calculate average monotonicity of key attributes
+                key_monotonicity = 0.0
+                if key_attr_results:
+                    key_monotonicity = sum(result['monotonic_percent'] for result in key_attr_results.values()) / len(key_attr_results)
+                
+                # Apply extra penalty for low key attribute monotonicity
+                key_monotonicity_penalty = max(0, monotonicity_target - key_monotonicity) * 0.7
+                
+                # Calculate final penalized score
+                penalized_score = weighted_score - (penalty * penalty_factor) - monotonicity_penalty - key_monotonicity_penalty
 
                 individual.train_r2 = train_score
                 individual.test_r2 = test_score
                 individual.weighted_r2 = weighted_score
                 individual.model = model
                 individual.features = features
+                individual.monotonicity_percent = monotonicity_percent
+                individual.key_attr_monotonicity = key_attr_results
 
                 return penalized_score,
 
@@ -185,7 +381,7 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
                         best_selected_features = selected_feature_names
                         best_errors_df = errors_df
 
-                        log_message(logging.INFO, f"New best model found for Model {model_number + 1} (R² score: {best_weighted_r2_score:.4f})")
+                        log_message(logging.INFO, f"New best model found for Model {model_number + 1} (R² score: {best_weighted_r2_score:.4f}, Monotonicity: {best_model.monotonicity_percent:.2f})")
                         
                 r2_values.append(best_weighted_r2_score)
                 iterations.append(iteration)
@@ -208,7 +404,7 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
                 X_full = X_poly[:, best_model.features]
                 y_pred_full = best_model.model.predict(X_full)
                 full_dataset_r2 = r2_score(y, y_pred_full)
-                log_message(logging.INFO, f"GA optimization completed for Model {model_number + 1}. Full dataset R²: {full_dataset_r2:.4f}")
+                log_message(logging.INFO, f"GA optimization completed for Model {model_number + 1}. Full dataset R²: {full_dataset_r2:.4f}, Monotonicity: {best_model.monotonicity_percent:.2f}")
             else:
                 full_dataset_r2 = 0
                 log_message(logging.WARNING, f"GA optimization completed for Model {model_number + 1}. No valid model found")
