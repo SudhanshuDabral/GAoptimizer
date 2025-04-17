@@ -15,3 +15,6 @@ utils/__pycache__/reporting.cpython-311.pyc
 static/__pycache__/styles.cpython-311.pyc
 realtime_analytics/__pycache__/analysis_utils.cpython-311.pyc
 .streamlit/secrets.toml
+genetic_algorithm_results.xlsx
+monotonicity_data.xlsx
+statistics.xlsx
