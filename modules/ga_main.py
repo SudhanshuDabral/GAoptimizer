@@ -353,7 +353,38 @@ def ga_optimization_section():
                                                help="Select the type of regression model to use in the optimization process.")
                     st.session_state.ga_optimizer['regression_type'] = 'FPR' if regression_type == "Full Polynomial Regression" else 'LWIP'
                     
-
+                    # Add monotonicity check well selection
+                    st.markdown("### Monotonicity Check Settings")
+                    st.write("Select wells to use for determining monotonicity ranges during model optimization:")
+                    
+                    # Get available wells from database regardless of data source
+                    wells = get_well_details()
+                    well_options = {well['well_name']: well['well_id'] for well in wells}
+                    
+                    # Set default selections safely - checking if selected_wells exists and is not empty
+                    default_selections = []
+                    if data_source == "Database":
+                        if 'selected_wells' in locals() and selected_wells:
+                            default_selections = selected_wells[:1]
+                        elif 'ga_optimizer' in st.session_state and 'selected_wells' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['selected_wells']:
+                            default_selections = st.session_state.ga_optimizer['selected_wells'][:1]
+                    
+                    monotonicity_wells = st.multiselect(
+                        "Select Wells for Monotonicity Check", 
+                        options=list(well_options.keys()), 
+                        default=default_selections,
+                        help="These wells will be used to determine the realistic range of attributes for monotonicity checking"
+                    )
+                    monotonicity_well_ids = [well_options[well] for well in monotonicity_wells]
+                    st.session_state.ga_optimizer['monotonicity_wells'] = monotonicity_well_ids
+                    
+                    if len(monotonicity_wells) == 0:
+                        if data_source == "Database":
+                            st.info("If no wells are selected, the training data ranges will be used for monotonicity checking.")
+                        else:
+                            st.info("If no wells are selected, the uploaded data ranges will be used for monotonicity checking. " 
+                                   "Selecting database wells can provide more realistic ranges based on field data.")
+                
                 if st.session_state.ga_optimizer['running']:
                     if st.button("Stop GA Optimization", key="toggle_button"):
                         st.session_state.ga_optimizer['running'] = False
@@ -533,8 +564,6 @@ def display_ga_results():
                                     if non_monotonic > 0:
                                         st.warning(f"Found {non_monotonic} points where productivity decreases as {attr} increases.")
                                         st.write("For optimal hydraulic fracturing models, productivity should consistently increase with this attribute.")
-                                    else:
-                                        st.success(f"Perfect monotonicity! Productivity consistently increases as {attr} increases.")
                 
                 st.code(response_equation, language='text')
                 
@@ -815,7 +844,9 @@ def monotonicity_check_modal():
     # Display plots and store them
     if st.session_state.ga_optimizer['monotonicity_results']:
         st.session_state.monotonicity_plots = {}  # Reset plots dictionary
+        
         for stage, result_df in st.session_state.ga_optimizer['monotonicity_results'].items():
+            st.subheader(f"Results for Stage {stage}")
             required_columns = ['Productivity', 'total_dhppm_stage', 'total_slurry_dp_stage']
             missing_columns = [col for col in required_columns if col not in result_df.columns]
             
@@ -823,112 +854,122 @@ def monotonicity_check_modal():
                 st.warning(f"Stage {stage}: Missing columns: {', '.join(missing_columns)}")
                 st.write("Available columns:", result_df.columns.tolist())
             else:
-                fig = plot_column(result_df, stage)
-                st.plotly_chart(fig, use_container_width=True)
+                # Create tabs for each stage
+                stage_tab1, stage_tab2 = st.tabs(["Stage Plots", "Key Attributes Monotonicity"])
                 
-                # Display key attribute monotonicity metrics if available
-                key_attributes = ['downhole_ppm', 'total_dhppm', 'tee']
-                key_metrics = [col for col in result_df.columns if any(f"{attr}_monotonicity_pct" in col for attr in key_attributes)]
+                with stage_tab1:
+                    st.write("### Simple Stage Plot")
+                    st.write("This plot shows the Productivity, Total DHPPM, and Total Slurry DP per stage.")
+                    fig = plot_column(result_df, stage)
+                    st.plotly_chart(fig, use_container_width=True)
+                    # Store the plot in session state
+                    st.session_state.monotonicity_plots[stage] = fig
                 
-                if key_metrics:
-                    st.subheader(f"Key Attribute Monotonicity for Stage {stage}")
+                with stage_tab2:
+                    st.write("### Key Attributes Monotonicity")
+                    st.write("These plots show the relationship between productivity and key attributes.")
                     
-                    # Create metrics table
-                    metrics_data = []
-                    for attr in key_attributes:
-                        pct_col = f"{attr}_monotonicity_pct"
-                        dir_col = f"{attr}_monotonicity_dir"
-                        
-                        if pct_col in result_df.columns and dir_col in result_df.columns:
-                            # Get the first non-null value
-                            pct_values = result_df[pct_col].dropna()
-                            dir_values = result_df[dir_col].dropna()
-                            
-                            if not pct_values.empty and not dir_values.empty:
-                                metrics_data.append({
-                                    "Attribute": attr,
-                                    "Monotonicity": f"{pct_values.iloc[0]:.1f}%",
-                                    "Direction": dir_values.iloc[0].capitalize(),
-                                    "Meets Target": "Yes" if pct_values.iloc[0] >= 90 else "No"
-                                })
+                    # Display key attribute monotonicity metrics if available
+                    key_attributes = ['downhole_ppm', 'total_dhppm', 'tee']
+                    key_metrics = [col for col in result_df.columns if any(f"{attr}_monotonicity_pct" in col for attr in key_attributes)]
                     
-                    if metrics_data:
-                        metrics_df = pd.DataFrame(metrics_data)
-                        st.dataframe(metrics_df, use_container_width=True, hide_index=True)
-                        
-                        # Create individual plots for each key attribute
+                    if key_metrics:
+                        # Create metrics table
+                        metrics_data = []
                         for attr in key_attributes:
-                            attr_col = f"{attr}_stage"
-                            if attr_col in result_df.columns:
-                                # Create a plot showing relationship between attribute and productivity
-                                import plotly.graph_objects as go
-                                sorted_df = result_df.sort_values(attr_col)
+                            pct_col = f"{attr}_monotonicity_pct"
+                            dir_col = f"{attr}_monotonicity_dir"
+                            
+                            if pct_col in result_df.columns and dir_col in result_df.columns:
+                                # Get the first non-null value
+                                pct_values = result_df[pct_col].dropna()
+                                dir_values = result_df[dir_col].dropna()
                                 
-                                fig = go.Figure()
-                                fig.add_trace(go.Scatter(
-                                    x=sorted_df[attr_col],
-                                    y=sorted_df['Productivity'],
-                                    mode='lines+markers',
-                                    name=f"{attr} vs Productivity"
-                                ))
-                                
-                                # Add trend line
-                                # Calculate linear fit
-                                import numpy as np
-                                z = np.polyfit(sorted_df[attr_col], sorted_df['Productivity'], 1)
-                                p = np.poly1d(z)
-                                
-                                # Check if trend is positive or negative
-                                trend_slope = z[0]
-                                trend_color = 'green' if trend_slope > 0 else 'red'
-                                
-                                fig.add_trace(go.Scatter(
-                                    x=sorted_df[attr_col],
-                                    y=p(sorted_df[attr_col]),
-                                    mode='lines',
-                                    name='Trend Line',
-                                    line=dict(color=trend_color, dash='dash')
-                                ))
-                                
-                                # Get monotonicity metrics
-                                pct_col = f"{attr}_monotonicity_pct"
-                                dir_col = f"{attr}_monotonicity_dir"
-                                non_mono_col = f"{attr}_non_monotonic_pct"
-                                
-                                monotonicity_text = ""
-                                if pct_col in result_df.columns and dir_col in result_df.columns:
-                                    pct_values = result_df[pct_col].dropna()
-                                    dir_values = result_df[dir_col].dropna()
+                                if not pct_values.empty and not dir_values.empty:
+                                    metrics_data.append({
+                                        "Attribute": attr,
+                                        "Monotonicity": f"{pct_values.iloc[0]:.1f}%",
+                                        "Direction": dir_values.iloc[0].capitalize(),
+                                        "Meets Target": "Yes" if pct_values.iloc[0] >= 90 else "No"
+                                    })
+                        
+                        if metrics_data:
+                            st.write("#### Monotonicity Metrics Summary")
+                            metrics_df = pd.DataFrame(metrics_data)
+                            st.dataframe(metrics_df, use_container_width=True, hide_index=True)
+                            
+                            # Create individual plots for each key attribute
+                            for attr in key_attributes:
+                                attr_col = f"{attr}_stage"
+                                if attr_col in result_df.columns:
+                                    # Create a plot showing relationship between attribute and productivity
+                                    import plotly.graph_objects as go
+                                    sorted_df = result_df.sort_values(attr_col)
                                     
-                                    if not pct_values.empty and not dir_values.empty:
-                                        monotonicity_text = f"Monotonicity: {pct_values.iloc[0]:.1f}% ({dir_values.iloc[0]})"
-                                
-                                fig.update_layout(
-                                    title=f"Stage {stage}: {attr} vs Productivity - {monotonicity_text}",
-                                    xaxis_title=attr,
-                                    yaxis_title="Productivity",
-                                    hovermode="x unified"
-                                )
-                                
-                                st.plotly_chart(fig, use_container_width=True)
-                                
-                                # Add explanation based on trend direction
-                                if trend_slope > 0:
-                                    st.success(f"✅ The overall trend shows productivity increasing with {attr}, which is the physically expected behavior.")
-                                else:
-                                    st.error(f"❌ The overall trend shows productivity decreasing with {attr}, which is contrary to the expected physical behavior in hydraulic fracturing.")
-                                
-                                # Show non-monotonic percentage if available
-                                if non_mono_col in result_df.columns:
-                                    non_mono_values = result_df[non_mono_col].dropna()
-                                    if not non_mono_values.empty:
-                                        non_mono_pct = non_mono_values.iloc[0]
-                                        if non_mono_pct > 0:
-                                            st.warning(f"Found {non_mono_pct:.1f}% of points where productivity decreases as {attr} increases.")
-                                            st.write("For optimal hydraulic fracturing models, productivity should consistently increase with this attribute.")
-                
-                # Store the plot in session state
-                st.session_state.monotonicity_plots[stage] = fig
+                                    fig = go.Figure()
+                                    fig.add_trace(go.Scatter(
+                                        x=sorted_df[attr_col],
+                                        y=sorted_df['Productivity'],
+                                        mode='lines+markers',
+                                        name=f"{attr} vs Productivity"
+                                    ))
+                                    
+                                    # Add trend line
+                                    # Calculate linear fit
+                                    import numpy as np
+                                    z = np.polyfit(sorted_df[attr_col], sorted_df['Productivity'], 1)
+                                    p = np.poly1d(z)
+                                    
+                                    # Check if trend is positive or negative
+                                    trend_slope = z[0]
+                                    trend_color = 'green' if trend_slope > 0 else 'red'
+                                    
+                                    fig.add_trace(go.Scatter(
+                                        x=sorted_df[attr_col],
+                                        y=p(sorted_df[attr_col]),
+                                        mode='lines',
+                                        name='Trend Line',
+                                        line=dict(color=trend_color, dash='dash')
+                                    ))
+                                    
+                                    # Get monotonicity metrics
+                                    pct_col = f"{attr}_monotonicity_pct"
+                                    dir_col = f"{attr}_monotonicity_dir"
+                                    non_mono_col = f"{attr}_non_monotonic_pct"
+                                    
+                                    monotonicity_text = ""
+                                    if pct_col in result_df.columns and dir_col in result_df.columns:
+                                        pct_values = result_df[pct_col].dropna()
+                                        dir_values = result_df[dir_col].dropna()
+                                        
+                                        if not pct_values.empty and not dir_values.empty:
+                                            monotonicity_text = f"Monotonicity: {pct_values.iloc[0]:.1f}% ({dir_values.iloc[0]})"
+                                    
+                                    fig.update_layout(
+                                        title=f"Stage {stage}: {attr} vs Productivity - {monotonicity_text}",
+                                        xaxis_title=attr,
+                                        yaxis_title="Productivity",
+                                        hovermode="x unified"
+                                    )
+                                    
+                                    st.plotly_chart(fig, use_container_width=True)
+                                    
+                                    # Add explanation based on trend direction
+                                    if trend_slope > 0:
+                                        st.success(f"✅ The overall trend shows productivity increasing with {attr}, which is the physically expected behavior.")
+                                    else:
+                                        st.error(f"❌ The overall trend shows productivity decreasing with {attr}, which is contrary to the expected physical behavior in hydraulic fracturing.")
+                                    
+                                    # Show non-monotonic percentage if available
+                                    if non_mono_col in result_df.columns:
+                                        non_mono_values = result_df[non_mono_col].dropna()
+                                        if not non_mono_values.empty:
+                                            non_mono_pct = non_mono_values.iloc[0]
+                                            if non_mono_pct > 0:
+                                                st.warning(f"Found {non_mono_pct:.1f}% of points where productivity decreases as {attr} increases.")
+                                                st.write("For optimal hydraulic fracturing models, productivity should consistently increase with this attribute.")
+                    else:
+                        st.warning("No key attribute monotonicity metrics available for this stage.")
         
         # Add export button if there are plots to export
         if st.session_state.monotonicity_plots:
@@ -1233,7 +1274,8 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
     
     # Filter out excluded rows based on the format of excluded_rows
     if excluded_rows:
-        if isinstance(excluded_rows[0], dict):  # Using Well Name and stage
+        # Check the format of excluded_rows by safely checking the first element
+        if len(excluded_rows) > 0 and isinstance(excluded_rows[0], dict):  # Using Well Name and stage
             # Create a mask for rows to exclude based on Well Name and stage
             mask = pd.Series(False, index=df.index)
             for excluded_row in excluded_rows:
@@ -1245,6 +1287,58 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
 
     #add predictors to session state variable for model saving
     st.session_state.ga_optimizer['predictors'] = predictors
+    
+    # Process selected wells for monotonicity range determination
+    monotonicity_ranges = None
+    if 'monotonicity_wells' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['monotonicity_wells']:
+        try:
+            with st.spinner("Calculating monotonicity ranges from selected wells..."):
+                # Get array data for each well and stage
+                key_attributes = ['downhole_ppm', 'total_dhppm', 'tee']
+                attribute_min_max = {attr: {'min': float('inf'), 'max': float('-inf')} for attr in key_attributes}
+                
+                # Process each well
+                for well_id in st.session_state.ga_optimizer['monotonicity_wells']:
+                    stages = get_well_stages(well_id)
+                    
+                    for stage in stages:
+                        array_data = get_array_data(well_id, stage)
+                        if array_data is not None:
+                            if not isinstance(array_data, pd.DataFrame):
+                                array_data = pd.DataFrame(array_data)
+                            
+                            # Process array data to calculate stage metrics like in check_monotonicity function
+                            result_df = check_monotonicity_func(array_data, st.session_state.ga_optimizer['df_statistics'], "Corrected_Prod = 1")
+                            
+                            # Extract min/max values for key attributes
+                            for attr in key_attributes:
+                                attr_col = f"{attr}_stage"
+                                if attr_col in result_df.columns:
+                                    attr_min = result_df[attr_col].min()
+                                    attr_max = result_df[attr_col].max()
+                                    
+                                    attribute_min_max[attr]['min'] = min(attribute_min_max[attr]['min'], attr_min)
+                                    attribute_min_max[attr]['max'] = max(attribute_min_max[attr]['max'], attr_max)
+                
+                # Check if we found valid ranges
+                valid_ranges = all(
+                    attribute_min_max[attr]['min'] != float('inf') and 
+                    attribute_min_max[attr]['max'] != float('-inf') 
+                    for attr in key_attributes
+                )
+                
+                if valid_ranges:
+                    monotonicity_ranges = attribute_min_max
+                    range_info = ", ".join([
+                        f"{attr}: [{ranges['min']:.2f}, {ranges['max']:.2f}]" 
+                        for attr, ranges in monotonicity_ranges.items()
+                    ])
+                    st.success(f"Monotonicity ranges calculated from selected wells: {range_info}")
+                else:
+                    st.warning("Could not determine valid ranges for all key attributes. Using default ranges.")
+        except Exception as e:
+            st.error(f"Error calculating monotonicity ranges: {str(e)}")
+            log_message(logging.ERROR, f"Error calculating monotonicity ranges: {str(e)}")
     
     start_time = time.time()
     timer_placeholder = st.empty()
@@ -1273,7 +1367,8 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
                     st.session_state.continuous_optimization['model_markers'],
                     plot_placeholder,
                     st.session_state.continuous_optimization['current_iteration'],
-                    monotonicity_target
+                    monotonicity_target,
+                    monotonicity_ranges
                 )
                 if w:
                     for warning in w:

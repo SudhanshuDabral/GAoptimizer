@@ -38,7 +38,7 @@ if 'FitnessMax' not in creator.__dict__:
 if 'Individual' not in creator.__dict__:
     creator.create("Individual", list, fitness=creator.FitnessMax)
 
-def check_key_attributes_monotonicity(model, X, feature_names, selected_features):
+def check_key_attributes_monotonicity(model, X, feature_names, selected_features, attribute_ranges=None):
     """
     Check monotonicity specifically for key hydraulic fracturing attributes:
     - downhole_ppm
@@ -68,8 +68,14 @@ def check_key_attributes_monotonicity(model, X, feature_names, selected_features
                 continue
                 
             # Get min and max values for the feature
-            feat_min = X[:, feat_idx].min()
-            feat_max = X[:, feat_idx].max()
+            if attribute_ranges and base_feature in attribute_ranges:
+                feat_min = attribute_ranges[base_feature]['min']
+                feat_max = attribute_ranges[base_feature]['max']
+                log_message(logging.INFO, f"Using provided range for {base_feature}: [{feat_min}, {feat_max}]")
+            else:
+                feat_min = X[:, feat_idx].min()
+                feat_max = X[:, feat_idx].max()
+                log_message(logging.INFO, f"Using dataset range for {base_feature}: [{feat_min}, {feat_max}]")
             
             # Generate test points
             test_points = np.linspace(feat_min, feat_max, n_points)
@@ -128,7 +134,7 @@ def check_key_attributes_monotonicity(model, X, feature_names, selected_features
         log_message(logging.WARNING, f"Error in key attributes monotonicity check: {str(e)}")
         return {}
 
-def check_monotonicity_percent(model, X, feature_names, selected_features, prioritize_key_attributes=True):
+def check_monotonicity_percent(model, X, feature_names, selected_features, prioritize_key_attributes=True, attribute_ranges=None):
     """
     Check what percentage of the feature space exhibits monotonic behavior
     for the given model with respect to each feature.
@@ -159,11 +165,16 @@ def check_monotonicity_percent(model, X, feature_names, selected_features, prior
                 continue
                 
             # Determine if this is a key attribute
-            is_key_attribute = feature_name in key_attributes
+            base_feature = feature_name.split()[0] if ' ' in feature_name else feature_name
+            is_key_attribute = base_feature in key_attributes
             
             # Get min and max values for the feature
-            feat_min = X[:, feat_idx].min()
-            feat_max = X[:, feat_idx].max()
+            if attribute_ranges and base_feature in attribute_ranges:
+                feat_min = attribute_ranges[base_feature]['min']
+                feat_max = attribute_ranges[base_feature]['max']
+            else:
+                feat_min = X[:, feat_idx].min()
+                feat_max = X[:, feat_idx].max()
             
             # Generate test points
             test_points = np.linspace(feat_min, feat_max, n_points)
@@ -216,7 +227,7 @@ def check_monotonicity_percent(model, X, feature_names, selected_features, prior
         log_message(logging.WARNING, f"Error in monotonicity check: {str(e)}")
         return 0.0
 
-def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, timer_placeholder, regression_type, model_number, r2_values, iterations, model_markers, plot_placeholder, start_iteration, monotonicity_target=0.9):
+def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, timer_placeholder, regression_type, model_number, r2_values, iterations, model_markers, plot_placeholder, start_iteration, monotonicity_target=0.9, monotonicity_ranges=None):
     log_message(logging.INFO, f"Starting GA optimization for Model {model_number + 1}")
     with warnings.catch_warnings(record=True) as caught_warnings:
         warnings.simplefilter("always")
@@ -272,11 +283,14 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
                 penalty_factor = 0.01
 
                 # Check monotonicity and apply penalty if needed
-                monotonicity_percent = check_monotonicity_percent(model, X_poly, feature_names, features)
+                monotonicity_percent = check_monotonicity_percent(model, X_poly, feature_names, features, 
+                                                               prioritize_key_attributes=True, 
+                                                               attribute_ranges=monotonicity_ranges)
                 monotonicity_penalty = max(0, monotonicity_target - monotonicity_percent) * 0.5
                 
                 # Check key attributes monotonicity
-                key_attr_results = check_key_attributes_monotonicity(model, X_poly, feature_names, features)
+                key_attr_results = check_key_attributes_monotonicity(model, X_poly, feature_names, features,
+                                                                 attribute_ranges=monotonicity_ranges)
                 
                 # Calculate average monotonicity of key attributes
                 key_monotonicity = 0.0

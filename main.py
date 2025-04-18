@@ -118,12 +118,7 @@ def login():
     st.markdown("<h1 style='text-align: center;'>Analysis made easy</h1>", unsafe_allow_html=True)
 
     name, authentication_status, username = authenticator.login(
-        fields={
-            "form_name": "Login",
-            "username": "Username",
-            "password": "Password",
-            "login_button": "Login"
-        },
+        'Login',
         location='main'
     )
 

@@ -2,7 +2,7 @@ import os
 import uuid
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from streamlit_authenticator.utilities.hasher import Hasher
+from streamlit_authenticator import Hasher
 import streamlit as st
 import json
 import pandas as pd
