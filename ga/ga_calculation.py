@@ -38,9 +38,10 @@ if 'FitnessMax' not in creator.__dict__:
 if 'Individual' not in creator.__dict__:
     creator.create("Individual", list, fitness=creator.FitnessMax)
 
-def check_key_attributes_monotonicity(model, X, feature_names, selected_features, attribute_ranges=None):
+def check_key_attributes_monotonicity(model, X, feature_names, selected_features, attribute_ranges=None, selected_monotonic_attributes=None):
     """
-    Check monotonicity specifically for key hydraulic fracturing attributes:
+    Check monotonicity specifically for the selected attributes.
+    Default key hydraulic fracturing attributes if none selected:
     - downhole_ppm
     - total_dhppm
     - tee
@@ -52,7 +53,13 @@ def check_key_attributes_monotonicity(model, X, feature_names, selected_features
     try:
         # Number of test points to check monotonicity
         n_points = 100
-        key_attributes = ['downhole_ppm', 'total_dhppm', 'tee']
+        
+        # Default key attributes if none selected
+        default_key_attributes = ['downhole_ppm', 'total_dhppm', 'tee']
+        
+        # Use selected attributes if provided, otherwise use defaults
+        key_attributes = selected_monotonic_attributes if selected_monotonic_attributes else default_key_attributes
+        
         results = {}
         
         # Get feature indices
@@ -62,7 +69,7 @@ def check_key_attributes_monotonicity(model, X, feature_names, selected_features
         for feat_idx in feature_indices:
             feature_name = feature_names[feat_idx]
             
-            # Only check key attributes
+            # Only check selected attributes
             base_feature = feature_name.split()[0] if ' ' in feature_name else feature_name
             if base_feature not in key_attributes:
                 continue
@@ -134,12 +141,12 @@ def check_key_attributes_monotonicity(model, X, feature_names, selected_features
         log_message(logging.WARNING, f"Error in key attributes monotonicity check: {str(e)}")
         return {}
 
-def check_monotonicity_percent(model, X, feature_names, selected_features, prioritize_key_attributes=True, attribute_ranges=None):
+def check_monotonicity_percent(model, X, feature_names, selected_features, prioritize_key_attributes=True, attribute_ranges=None, selected_monotonic_attributes=None):
     """
     Check what percentage of the feature space exhibits monotonic behavior
     for the given model with respect to each feature.
     
-    For key attributes, we specifically check for INCREASING monotonicity.
+    For selected attributes, we specifically check for INCREASING monotonicity.
     
     Returns: float between 0 and 1 representing the overall monotonicity percentage
     """
@@ -149,8 +156,12 @@ def check_monotonicity_percent(model, X, feature_names, selected_features, prior
         monotonic_count = 0
         total_tests = 0
         
-        # Key attributes to prioritize if enabled
-        key_attributes = ['downhole_ppm', 'total_dhppm', 'tee']
+        # Default key attributes to prioritize if enabled
+        default_key_attributes = ['downhole_ppm', 'total_dhppm', 'tee']
+        
+        # Use selected attributes if provided, otherwise use defaults
+        key_attributes = selected_monotonic_attributes if selected_monotonic_attributes else default_key_attributes
+        
         key_attribute_weight = 2.0  # Weight for key attributes
         
         # Get feature indices
@@ -227,7 +238,7 @@ def check_monotonicity_percent(model, X, feature_names, selected_features, prior
         log_message(logging.WARNING, f"Error in monotonicity check: {str(e)}")
         return 0.0
 
-def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, timer_placeholder, regression_type, model_number, r2_values, iterations, model_markers, plot_placeholder, start_iteration, monotonicity_target=0.9, monotonicity_ranges=None):
+def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, timer_placeholder, regression_type, model_number, r2_values, iterations, model_markers, plot_placeholder, start_iteration, monotonicity_target=0.9, monotonicity_ranges=None, selected_monotonic_attributes=None):
     log_message(logging.INFO, f"Starting GA optimization for Model {model_number + 1}")
     with warnings.catch_warnings(record=True) as caught_warnings:
         warnings.simplefilter("always")
@@ -285,12 +296,14 @@ def run_ga(df, target_column, predictors, r2_threshold, coef_range, prob_crossov
                 # Check monotonicity and apply penalty if needed
                 monotonicity_percent = check_monotonicity_percent(model, X_poly, feature_names, features, 
                                                                prioritize_key_attributes=True, 
-                                                               attribute_ranges=monotonicity_ranges)
+                                                               attribute_ranges=monotonicity_ranges,
+                                                               selected_monotonic_attributes=selected_monotonic_attributes)
                 monotonicity_penalty = max(0, monotonicity_target - monotonicity_percent) * 0.5
                 
                 # Check key attributes monotonicity
                 key_attr_results = check_key_attributes_monotonicity(model, X_poly, feature_names, features,
-                                                                 attribute_ranges=monotonicity_ranges)
+                                                                 attribute_ranges=monotonicity_ranges,
+                                                                 selected_monotonic_attributes=selected_monotonic_attributes)
                 
                 # Calculate average monotonicity of key attributes
                 key_monotonicity = 0.0

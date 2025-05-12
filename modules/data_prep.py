@@ -143,10 +143,23 @@ def main(authentication_status):
 
         uploaded_files = st.file_uploader("Upload CSV files", accept_multiple_files=True, type=["csv"])
 
+        # Debug: Check uploaded_files content before the main condition
+        st.write(f"Debug: uploaded_files type: {type(uploaded_files)}")
+        st.write(f"Debug: uploaded_files content: {uploaded_files}")
+
         if uploaded_files:
+            # Debug: Check processing_files flag state inside if uploaded_files
+            st.write(f"Debug: Inside 'if uploaded_files'. processing_files flag: {st.session_state.data_prep.get('processing_files', 'Not Set')}")
+
             if not st.session_state.data_prep['processing_files']:
                 st.session_state.data_prep['processing_files'] = True
+                st.write("Calling process_files...") # Debug print
                 process_files(uploaded_files, well_details)
+                st.write("Finished process_files.")
+                if isinstance(st.session_state.data_prep.get('consolidated_output'), pd.DataFrame):
+                    st.write(f"Is consolidated_output empty? {st.session_state.data_prep['consolidated_output'].empty}")
+                    st.write("Consolidated Output Head:")
+                    st.dataframe(st.session_state.data_prep['consolidated_output'].head())
                 st.session_state.data_prep['processing_files'] = False
 
             # Show the consolidated results in a table
@@ -175,10 +188,12 @@ def extract_stage(filename):
         return int(match.group(1))
     
     # If no method works, return None
+    st.warning(f"Could not extract stage number from filename: {filename}")
     return None
 
 def process_files(files, well_details):
     all_results = pd.DataFrame()
+    st.write(f"Initial all_results is empty: {all_results.empty}")
 
     user_id = st.session_state.user_id
     user_dir = os.path.join('export', str(user_id))
@@ -204,8 +219,14 @@ def process_files(files, well_details):
             continue  # Skip this file if the stage value is invalid
 
         # Load the CSV file using column headers
-        data = pd.read_csv(temp_file_path)
-        
+        try:
+            data = pd.read_csv(temp_file_path)
+            st.write(f"Successfully read {file.name} for stage {stage}")
+        except Exception as e:
+            st.error(f"Error reading CSV file {file.name}: {e}")
+            os.remove(temp_file_path)
+            continue
+
         # Create synthetic timestamps if needed
         if 'time' in data.columns and 'epoch' not in data.columns and 'timestamp_utc' not in data.columns:
             # Create a base timestamp (e.g., start of 2024)
@@ -224,11 +245,17 @@ def process_files(files, well_details):
             T = data['time'].values
         else:
             st.error(f"Required column 'time' or 'timestamp_utc' not found in file: {file.name}")
+            os.remove(temp_file_path)
             continue
 
         # Extract data using column headers
-        SlRate = data['slurry_rate'].values
-        Pres = data['treating_pressure'].values
+        try:
+            SlRate = data['slurry_rate'].values
+            Pres = data['treating_pressure'].values
+        except KeyError as e:
+            st.error(f"Missing required column in {file.name}: {e}")
+            os.remove(temp_file_path)
+            continue
         
         # Handle different column names for bottomhole proppant mass
         if 'bottomhole_prop_mass' in data.columns:
@@ -240,6 +267,7 @@ def process_files(files, well_details):
             prop_mass_col = 'bottomhole_prop_mass'
         else:
             st.error(f"Required column 'bottomhole_prop_mass' or 'bottom_prop_mass' not found in file: {file.name}")
+            os.remove(temp_file_path)
             continue
 
         completion_data = pd.DataFrame({
@@ -343,13 +371,20 @@ def process_files(files, well_details):
 
         file_results = [TotalPres, MedDHProp, MedianDP, DHPPM, TotDHPPM, TotalSlurryDP, MedianSlry, stage, num_windows, TotalDHProp]
         all_results = pd.concat([all_results, pd.DataFrame([file_results], columns=['TEE', 'MedianDHPM', 'MedianDP', 'DownholePPM', 'TotalDHPPM', 'TotalSlurryDP', 'MedianSlurry', 'Stages', '# of Windows', 'TotalDHProp'])])
+        st.write(f"Appended results for stage {stage}. Current all_results rows: {len(all_results)}")
+
+        # Clean up the temporary file after processing
+        try:
+            os.remove(temp_file_path)
+        except Exception as e:
+            st.warning(f"Could not remove temporary file {temp_file_path}: {e}")
 
     # Sort the consolidated results by the "Stages" column
-    all_results = all_results.sort_values(by='Stages', ascending=True)
-
-    # Writing the consolidated results to an Excel file
-    # output_file_path = os.path.join(user_dir, 'consolidated_output.csv')
-    # all_results.to_csv(output_file_path, index=False)
+    if not all_results.empty:
+        all_results = all_results.sort_values(by='Stages', ascending=True)
+        st.write("Sorted all_results by Stages.")
+    else:
+        st.warning("No files were processed successfully, all_results is empty.")
 
     # Save the consolidated results in session state
     st.session_state.data_prep['consolidated_output'] = all_results
@@ -357,14 +392,6 @@ def process_files(files, well_details):
     # Hide the progress bar
     progress_bar.empty()
     progress_text.empty()
-
-    # st.success(f"Consolidated data exported successfully to {output_file_path}")
-    # st.download_button(
-    #     label="Download consolidated output",
-    #     data=open(output_file_path, "rb").read(),
-    #     file_name="consolidated_output.csv",
-    #     mime="text/csv"
-    # )
 
 def save_data_in_db(well_id, consolidated_output, user_id):
     try:

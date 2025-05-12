@@ -62,9 +62,10 @@ def initialize_ga_state():
             'num_generations': 40,
             'population_size': 50,
             'predictors': [],
-            'selected_wells': [],  # Add this line
-            'coef_range': (-10.0, 10.0),  # Add this line
-            'num_models': 3,  # Add this line
+            'selected_wells': [],
+            'coef_range': (-10.0, 10.0),
+            'num_models': 3,
+            'selected_monotonic_attributes': ['downhole_ppm', 'total_dhppm', 'tee'],
         }
 
 def start_ga_optimization_callback():
@@ -353,37 +354,132 @@ def ga_optimization_section():
                                                help="Select the type of regression model to use in the optimization process.")
                     st.session_state.ga_optimizer['regression_type'] = 'FPR' if regression_type == "Full Polynomial Regression" else 'LWIP'
                     
-                    # Add monotonicity check well selection
+                    # Add monotonicity check attributes selection
                     st.markdown("### Monotonicity Check Settings")
-                    st.write("Select wells to use for determining monotonicity ranges during model optimization:")
+                    st.write("Select attributes to enforce monotonicity for during model optimization:")
                     
-                    # Get available wells from database regardless of data source
-                    wells = get_well_details()
-                    well_options = {well['well_name']: well['well_id'] for well in wells}
+                    monotonicity_attributes = [
+                        "tee", "median_dhpm", "median_dp", "median_slurry", 
+                        "total_slurry_dp", "downhole_ppm", "total_dhppm", "total_dh_prop"
+                    ]
                     
-                    # Set default selections safely - checking if selected_wells exists and is not empty
-                    default_selections = []
-                    if data_source == "Database":
-                        if 'selected_wells' in locals() and selected_wells:
-                            default_selections = selected_wells[:1]
-                        elif 'ga_optimizer' in st.session_state and 'selected_wells' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['selected_wells']:
-                            default_selections = st.session_state.ga_optimizer['selected_wells'][:1]
+                    # Set default selections - the original three key attributes
+                    default_selections = ["downhole_ppm", "total_dhppm", "tee"]
                     
-                    monotonicity_wells = st.multiselect(
-                        "Select Wells for Monotonicity Check", 
-                        options=list(well_options.keys()), 
+                    selected_monotonic_attributes = st.multiselect(
+                        "Select Attributes for Monotonicity Check",
+                        options=monotonicity_attributes,
                         default=default_selections,
-                        help="These wells will be used to determine the realistic range of attributes for monotonicity checking"
+                        help="For these attributes, the model will enforce that productivity increases as the attribute increases"
                     )
-                    monotonicity_well_ids = [well_options[well] for well in monotonicity_wells]
-                    st.session_state.ga_optimizer['monotonicity_wells'] = monotonicity_well_ids
                     
-                    if len(monotonicity_wells) == 0:
+                    st.session_state.ga_optimizer['selected_monotonic_attributes'] = selected_monotonic_attributes
+                    
+                    if not selected_monotonic_attributes:
+                        st.warning("No attributes selected for monotonicity check. The default attributes (downhole_ppm, total_dhppm, tee) will be used.")
+                    
+                    # Add radio button for range selection method
+                    range_selection_method = st.radio(
+                        "Select Range Determination Method",
+                        ["Use Database Wells", "Manual Range Input"],
+                        key="monotonicity_range_method"
+                    )
+                    
+                    if range_selection_method == "Use Database Wells":
+                        # Get available wells from database regardless of data source
+                        wells = get_well_details()
+                        well_options = {well['well_name']: well['well_id'] for well in wells}
+                        
+                        # Set default selections safely - checking if selected_wells exists and is not empty
+                        default_selections = []
                         if data_source == "Database":
-                            st.info("If no wells are selected, the training data ranges will be used for monotonicity checking.")
-                        else:
-                            st.info("If no wells are selected, the uploaded data ranges will be used for monotonicity checking. " 
-                                   "Selecting database wells can provide more realistic ranges based on field data.")
+                            if 'selected_wells' in locals() and selected_wells:
+                                default_selections = selected_wells[:1]
+                            elif 'ga_optimizer' in st.session_state and 'selected_wells' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['selected_wells']:
+                                default_selections = st.session_state.ga_optimizer['selected_wells'][:1]
+                        
+                        monotonicity_wells = st.multiselect(
+                            "Select Wells for Monotonicity Check", 
+                            options=list(well_options.keys()), 
+                            default=default_selections,
+                            help="These wells will be used to determine the realistic range of attributes for monotonicity checking"
+                        )
+                        monotonicity_well_ids = [well_options[well] for well in monotonicity_wells]
+                        st.session_state.ga_optimizer['monotonicity_wells'] = monotonicity_well_ids
+                        
+                        if len(monotonicity_wells) == 0:
+                            if data_source == "Database":
+                                st.info("If no wells are selected, the training data ranges will be used for monotonicity checking.")
+                            else:
+                                st.info("If no wells are selected, the uploaded data ranges will be used for monotonicity checking. " 
+                                       "Selecting database wells can provide more realistic ranges based on field data.")
+                        
+                        # If we have monotonicity ranges calculated from wells in the past, display them
+                        if 'calculated_monotonicity_ranges' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['calculated_monotonicity_ranges']:
+                            with st.expander("View Calculated Attribute Ranges", expanded=False):
+                                st.subheader("Attribute Ranges for Monotonicity Check")
+                                
+                                # Create a DataFrame for the ranges for better formatting
+                                range_data = []
+                                for attr, range_info in st.session_state.ga_optimizer['calculated_monotonicity_ranges'].items():
+                                    if attr in selected_monotonic_attributes:
+                                        range_data.append({
+                                            "Attribute": attr,
+                                            "Min Value": f"{range_info['min']:.4f}",
+                                            "Max Value": f"{range_info['max']:.4f}"
+                                        })
+                                
+                                if range_data:
+                                    range_df = pd.DataFrame(range_data)
+                                    st.dataframe(range_df, use_container_width=True, hide_index=True)
+                                else:
+                                    st.info("No ranges calculated yet. Run the optimization to calculate ranges.")
+                            
+                    else:  # Manual Range Input
+                        st.write("Enter manual ranges for selected monotonicity attributes:")
+                        
+                        # Create columns for min and max inputs based on selected attributes
+                        attributes_to_show = selected_monotonic_attributes if selected_monotonic_attributes else default_selections
+                        
+                        # Create a dictionary to store manual ranges
+                        manual_ranges = {}
+                        
+                        # Create a two-column layout
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.subheader("Minimum Values")
+                            for attr in attributes_to_show:
+                                attr_min = st.number_input(f"{attr} Min", value=0.0, format="%.2f", key=f"min_{attr}")
+                                if attr not in manual_ranges:
+                                    manual_ranges[attr] = {}
+                                manual_ranges[attr]['min'] = attr_min
+                        
+                        with col2:
+                            st.subheader("Maximum Values")
+                            for attr in attributes_to_show:
+                                attr_max = st.number_input(f"{attr} Max", value=100.0, format="%.2f", key=f"max_{attr}")
+                                if attr not in manual_ranges:
+                                    manual_ranges[attr] = {}
+                                manual_ranges[attr]['max'] = attr_max
+                        
+                        # Display manual ranges in a formatted table
+                        st.subheader("Attribute Ranges for Monotonicity Check")
+                        range_data = []
+                        for attr, range_info in manual_ranges.items():
+                            range_data.append({
+                                "Attribute": attr,
+                                "Min Value": f"{range_info['min']:.4f}",
+                                "Max Value": f"{range_info['max']:.4f}"
+                            })
+                        
+                        if range_data:
+                            range_df = pd.DataFrame(range_data)
+                            st.dataframe(range_df, use_container_width=True, hide_index=True)
+                        
+                        # Store manual ranges in session state
+                        st.session_state.ga_optimizer['manual_monotonicity_ranges'] = manual_ranges
+                        st.session_state.ga_optimizer['monotonicity_wells'] = []  # Clear wells selection
                 
                 if st.session_state.ga_optimizer['running']:
                     if st.button("Stop GA Optimization", key="toggle_button"):
@@ -482,20 +578,20 @@ def display_ga_results():
                     else:
                         st.warning("⚠️ This model has low monotonicity")
                     
-                    # Show key attribute monotonicity if available
+                    # Show attribute monotonicity if available
                     if hasattr(best_ind, 'key_attr_monotonicity') and best_ind.key_attr_monotonicity:
-                        st.write("### Key Attribute Monotonicity")
-                        st.info("For hydraulic fracturing, productivity should increase as these key attributes increase.")
+                        st.write("### Selected Attribute Monotonicity")
+                        st.info("For hydraulic fracturing, productivity should increase as these selected attributes increase.")
                         key_attrs = best_ind.key_attr_monotonicity
                         
-                        # Create a table for key attributes monotonicity
+                        # Create a table for attributes monotonicity
                         key_attr_data = []
                         for attr, info in key_attrs.items():
                             monotonicity_pct = info['monotonic_percent'] * 100
                             strict_pct = info.get('strict_monotonic_percent', 0) * 100
                             direction = info['direction']
                             
-                            # For key attributes, we need INCREASING monotonicity
+                            # For selected attributes, we need INCREASING monotonicity
                             is_valid = direction == "increasing" and monotonicity_pct >= 90
                             
                             key_attr_data.append({
@@ -516,12 +612,12 @@ def display_ga_results():
                             total_count = len(key_attr_data)
                             
                             if valid_count == total_count:
-                                st.success(f"✅ All {total_count} key attributes have increasing monotonic relationships with productivity.")
+                                st.success(f"✅ All {total_count} selected attributes have increasing monotonic relationships with productivity.")
                             else:
-                                st.warning(f"⚠️ Only {valid_count} out of {total_count} key attributes have properly increasing monotonic relationships with productivity.")
+                                st.warning(f"⚠️ Only {valid_count} out of {total_count} selected attributes have properly increasing monotonic relationships with productivity.")
                             
-                            # Add a button to show detailed plots for key attributes
-                            if st.button("Show Key Attribute Plots", key=f"key_attr_plots_{i}"):
+                            # Add a button to show detailed plots for selected attributes
+                            if st.button("Show Attribute Monotonicity Plots", key=f"key_attr_plots_{i}"):
                                 for attr, info in key_attrs.items():
                                     test_points = info['test_points']
                                     predictions = info['predictions']
@@ -571,6 +667,28 @@ def display_ga_results():
                     st.write("Selected Features:")
                     features_text = "\n".join([f"• {feature}" for feature in selected_feature_names])
                     st.code(features_text, language="markdown")
+                    
+                    # Show monotonicity attribute ranges if available
+                    if 'calculated_monotonicity_ranges' in st.session_state.ga_optimizer:
+                        st.write("Monotonicity Attribute Ranges Used:")
+                        
+                        # Get selected attributes
+                        selected_attrs = st.session_state.ga_optimizer.get('selected_monotonic_attributes', 
+                                                                          ['downhole_ppm', 'total_dhppm', 'tee'])
+                        
+                        # Create a DataFrame for the ranges for better formatting
+                        range_data = []
+                        for attr, range_info in st.session_state.ga_optimizer['calculated_monotonicity_ranges'].items():
+                            if attr in selected_attrs:
+                                range_data.append({
+                                    "Attribute": attr,
+                                    "Min Value": f"{range_info['min']:.4f}",
+                                    "Max Value": f"{range_info['max']:.4f}"
+                                })
+                        
+                        if range_data:
+                            range_df = pd.DataFrame(range_data)
+                            st.dataframe(range_df, use_container_width=True, hide_index=True)
                     
                     # Add dropdown for selecting percentage of top error points
                     error_percentage = st.selectbox(
@@ -1288,57 +1406,135 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
     #add predictors to session state variable for model saving
     st.session_state.ga_optimizer['predictors'] = predictors
     
+    # Get selected monotonic attributes from session state
+    selected_monotonic_attributes = st.session_state.ga_optimizer.get('selected_monotonic_attributes', None)
+    
+    # If no attributes were explicitly selected, use the default key attributes
+    if not selected_monotonic_attributes:
+        selected_monotonic_attributes = ['downhole_ppm', 'total_dhppm', 'tee']
+        st.warning("Using default attributes for monotonicity check: downhole_ppm, total_dhppm, tee")
+    
     # Process selected wells for monotonicity range determination
     monotonicity_ranges = None
-    if 'monotonicity_wells' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['monotonicity_wells']:
-        try:
-            with st.spinner("Calculating monotonicity ranges from selected wells..."):
-                # Get array data for each well and stage
-                key_attributes = ['downhole_ppm', 'total_dhppm', 'tee']
-                attribute_min_max = {attr: {'min': float('inf'), 'max': float('-inf')} for attr in key_attributes}
+    if 'monotonicity_range_method' in st.session_state.ga_optimizer:
+        if st.session_state.ga_optimizer['monotonicity_range_method'] == "Manual Range Input":
+            if 'manual_monotonicity_ranges' in st.session_state.ga_optimizer:
+                monotonicity_ranges = st.session_state.ga_optimizer['manual_monotonicity_ranges']
+                range_info = ", ".join([
+                    f"{attr}: [{ranges['min']:.2f}, {ranges['max']:.2f}]" 
+                    for attr, ranges in monotonicity_ranges.items()
+                ])
+                st.success(f"Using manual monotonicity ranges: {range_info}")
                 
-                # Process each well
-                for well_id in st.session_state.ga_optimizer['monotonicity_wells']:
-                    stages = get_well_stages(well_id)
+                # Also store as calculated ranges for consistent reference
+                st.session_state.ga_optimizer['calculated_monotonicity_ranges'] = monotonicity_ranges
+        elif 'monotonicity_wells' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['monotonicity_wells']:
+            try:
+                with st.spinner("Calculating monotonicity ranges from selected wells..."):
+                    # Get array data for each well and stage
+                    # Use selected attributes for monotonicity check
+                    key_attributes = selected_monotonic_attributes
+                    attribute_min_max = {attr: {'min': float('inf'), 'max': float('-inf')} for attr in key_attributes}
                     
-                    for stage in stages:
-                        array_data = get_array_data(well_id, stage)
-                        if array_data is not None:
-                            if not isinstance(array_data, pd.DataFrame):
-                                array_data = pd.DataFrame(array_data)
-                            
-                            # Process array data to calculate stage metrics like in check_monotonicity function
-                            result_df = check_monotonicity_func(array_data, st.session_state.ga_optimizer['df_statistics'], "Corrected_Prod = 1")
-                            
-                            # Extract min/max values for key attributes
-                            for attr in key_attributes:
-                                attr_col = f"{attr}_stage"
-                                if attr_col in result_df.columns:
-                                    attr_min = result_df[attr_col].min()
-                                    attr_max = result_df[attr_col].max()
-                                    
-                                    attribute_min_max[attr]['min'] = min(attribute_min_max[attr]['min'], attr_min)
-                                    attribute_min_max[attr]['max'] = max(attribute_min_max[attr]['max'], attr_max)
+                    # Process each well
+                    for well_id in st.session_state.ga_optimizer['monotonicity_wells']:
+                        stages = get_well_stages(well_id)
+                        
+                        for stage in stages:
+                            array_data = get_array_data(well_id, stage)
+                            if array_data is not None:
+                                if not isinstance(array_data, pd.DataFrame):
+                                    array_data = pd.DataFrame(array_data)
+                                
+                                # Process array data to calculate stage metrics like in check_monotonicity function
+                                result_df = check_monotonicity_func(array_data, st.session_state.ga_optimizer['df_statistics'], "Corrected_Prod = 1")
+                                
+                                # Extract min/max values for key attributes
+                                for attr in key_attributes:
+                                    attr_col = f"{attr}_stage"
+                                    if attr_col in result_df.columns:
+                                        attr_min = result_df[attr_col].min()
+                                        attr_max = result_df[attr_col].max()
+                                        
+                                        attribute_min_max[attr]['min'] = min(attribute_min_max[attr]['min'], attr_min)
+                                        attribute_min_max[attr]['max'] = max(attribute_min_max[attr]['max'], attr_max)
+                    
+                    # Check if we found valid ranges
+                    valid_ranges = all(
+                        attribute_min_max[attr]['min'] != float('inf') and 
+                        attribute_min_max[attr]['max'] != float('-inf') 
+                        for attr in key_attributes
+                    )
+                    
+                    if valid_ranges:
+                        monotonicity_ranges = attribute_min_max
+                        # Store the calculated ranges in session state for display
+                        st.session_state.ga_optimizer['calculated_monotonicity_ranges'] = monotonicity_ranges
+                        
+                        # Create a nice display of the ranges
+                        range_data = []
+                        for attr, range_info in monotonicity_ranges.items():
+                            range_data.append({
+                                "Attribute": attr,
+                                "Min Value": f"{range_info['min']:.4f}",
+                                "Max Value": f"{range_info['max']:.4f}"
+                            })
+                        
+                        if range_data:
+                            st.subheader("Calculated Attribute Ranges for Monotonicity Check")
+                            range_df = pd.DataFrame(range_data)
+                            st.dataframe(range_df, use_container_width=True, hide_index=True)
+                        
+                        range_info = ", ".join([
+                            f"{attr}: [{ranges['min']:.2f}, {ranges['max']:.2f}]" 
+                            for attr, ranges in monotonicity_ranges.items()
+                        ])
+                        st.success(f"Monotonicity ranges calculated from selected wells: {range_info}")
+                    else:
+                        st.warning("Could not determine valid ranges for all key attributes. Using default ranges.")
+            except Exception as e:
+                st.error(f"Error calculating monotonicity ranges: {str(e)}")
+                log_message(logging.ERROR, f"Error calculating monotonicity ranges: {str(e)}")
                 
-                # Check if we found valid ranges
-                valid_ranges = all(
-                    attribute_min_max[attr]['min'] != float('inf') and 
-                    attribute_min_max[attr]['max'] != float('-inf') 
-                    for attr in key_attributes
-                )
+    # If we're not using manual ranges or well-based ranges, calculate ranges from the dataset
+    if monotonicity_ranges is None and selected_monotonic_attributes:
+        try:
+            with st.spinner("Calculating monotonicity ranges from dataset..."):
+                attribute_min_max = {}
+                for attr in selected_monotonic_attributes:
+                    if attr in df.columns:
+                        attribute_min_max[attr] = {
+                            'min': df[attr].min(),
+                            'max': df[attr].max()
+                        }
                 
-                if valid_ranges:
+                if attribute_min_max:
                     monotonicity_ranges = attribute_min_max
+                    # Store the calculated ranges in session state for display
+                    st.session_state.ga_optimizer['calculated_monotonicity_ranges'] = monotonicity_ranges
+                    
+                    # Create a nice display of the ranges
+                    range_data = []
+                    for attr, range_info in monotonicity_ranges.items():
+                        range_data.append({
+                            "Attribute": attr,
+                            "Min Value": f"{range_info['min']:.4f}",
+                            "Max Value": f"{range_info['max']:.4f}"
+                        })
+                    
+                    if range_data:
+                        st.subheader("Calculated Attribute Ranges from Dataset for Monotonicity Check")
+                        range_df = pd.DataFrame(range_data)
+                        st.dataframe(range_df, use_container_width=True, hide_index=True)
+                    
                     range_info = ", ".join([
                         f"{attr}: [{ranges['min']:.2f}, {ranges['max']:.2f}]" 
                         for attr, ranges in monotonicity_ranges.items()
                     ])
-                    st.success(f"Monotonicity ranges calculated from selected wells: {range_info}")
-                else:
-                    st.warning("Could not determine valid ranges for all key attributes. Using default ranges.")
+                    st.success(f"Monotonicity ranges calculated from dataset: {range_info}")
         except Exception as e:
-            st.error(f"Error calculating monotonicity ranges: {str(e)}")
-            log_message(logging.ERROR, f"Error calculating monotonicity ranges: {str(e)}")
+            st.error(f"Error calculating monotonicity ranges from dataset: {str(e)}")
+            log_message(logging.ERROR, f"Error calculating monotonicity ranges from dataset: {str(e)}")
     
     start_time = time.time()
     timer_placeholder = st.empty()
@@ -1368,7 +1564,8 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
                     plot_placeholder,
                     st.session_state.continuous_optimization['current_iteration'],
                     monotonicity_target,
-                    monotonicity_ranges
+                    monotonicity_ranges,
+                    selected_monotonic_attributes
                 )
                 if w:
                     for warning in w:
