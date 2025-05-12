@@ -416,7 +416,8 @@ def ga_optimization_section():
                         
                         # If we have monotonicity ranges calculated from wells in the past, display them
                         if 'calculated_monotonicity_ranges' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['calculated_monotonicity_ranges']:
-                            with st.expander("View Calculated Attribute Ranges", expanded=False):
+                            show_ranges = st.checkbox("View Calculated Attribute Ranges", value=False)
+                            if show_ranges:
                                 st.subheader("Attribute Ranges for Monotonicity Check")
                                 
                                 # Create a DataFrame for the ranges for better formatting
