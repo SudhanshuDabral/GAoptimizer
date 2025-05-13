@@ -60,10 +60,19 @@ def update_plot(iterations, r2_values, plot_placeholder, model_markers):
         title='R² Values vs Iteration (All Models)',
         xaxis_title='Iteration',
         yaxis_title='R² Value',
-        showlegend=True
+        showlegend=True,
+        height=400,
+        # Use auto-sized margins
+        margin=dict(l=50, r=50, b=50, t=50),
+        # Force responsive layout
+        autosize=True
     )
 
-    plot_placeholder.plotly_chart(fig, use_container_width=True)
+    # Force the plot to refresh
+    with plot_placeholder:
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        # Add a small text to force refresh
+        st.empty()
 
 def plot_r2_vs_iteration():
     fig = go.Figure()

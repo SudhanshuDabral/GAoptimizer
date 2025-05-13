@@ -4,6 +4,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+from utils import plotting
 from utils.db import (get_well_details, get_modeling_data,
                        get_well_stages, get_array_data, insert_ga_model)
 from logging.handlers import RotatingFileHandler
@@ -20,6 +21,8 @@ from utils.ga_utils import (zscore_data, calculate_df_statistics,
 from utils.reporting import generate_pdf_report, generate_ppt_report, generate_monotonicity_pdf_report
 import time
 import os
+import concurrent.futures
+
 
 
 # Set up logging
@@ -1431,34 +1434,62 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
                 st.session_state.ga_optimizer['calculated_monotonicity_ranges'] = monotonicity_ranges
         elif 'monotonicity_wells' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['monotonicity_wells']:
             try:
-                with st.spinner("Calculating monotonicity ranges from selected wells..."):
+                with st.spinner("Calculating monotonicity ranges from selected wells in parallel..."):
                     # Get array data for each well and stage
                     # Use selected attributes for monotonicity check
                     key_attributes = selected_monotonic_attributes
                     attribute_min_max = {attr: {'min': float('inf'), 'max': float('-inf')} for attr in key_attributes}
                     
-                    # Process each well
+                    # Prepare a list of all stage processing tasks
+                    all_tasks = []
                     for well_id in st.session_state.ga_optimizer['monotonicity_wells']:
                         stages = get_well_stages(well_id)
-                        
                         for stage in stages:
-                            array_data = get_array_data(well_id, stage)
-                            if array_data is not None:
-                                if not isinstance(array_data, pd.DataFrame):
-                                    array_data = pd.DataFrame(array_data)
+                            all_tasks.append((well_id, stage))
+                    
+                    # Create a progress bar
+                    progress_bar = st.progress(0)
+                    progress_text = st.empty()
+                    progress_text.text(f"Processing 0/{len(all_tasks)} stages...")
+                    
+                    # Run stage processing in parallel using ThreadPoolExecutor
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+                        # Submit all tasks to the executor
+                        future_to_stage = {
+                            executor.submit(
+                                process_stage_data, 
+                                well_id, 
+                                stage, 
+                                key_attributes, 
+                                st.session_state.ga_optimizer['df_statistics']
+                            ): (well_id, stage) for well_id, stage in all_tasks
+                        }
+                        
+                        # Process completed futures as they come in
+                        completed = 0
+                        for future in concurrent.futures.as_completed(future_to_stage):
+                            completed += 1
+                            well_id, stage = future_to_stage[future]
+                            
+                            try:
+                                stage_results = future.result()
                                 
-                                # Process array data to calculate stage metrics like in check_monotonicity function
-                                result_df = check_monotonicity_func(array_data, st.session_state.ga_optimizer['df_statistics'], "Corrected_Prod = 1")
+                                # Update attribute min/max values
+                                for attr, values in stage_results.items():
+                                    attribute_min_max[attr]['min'] = min(attribute_min_max[attr]['min'], values['min'])
+                                    attribute_min_max[attr]['max'] = max(attribute_min_max[attr]['max'], values['max'])
                                 
-                                # Extract min/max values for key attributes
-                                for attr in key_attributes:
-                                    attr_col = f"{attr}_stage"
-                                    if attr_col in result_df.columns:
-                                        attr_min = result_df[attr_col].min()
-                                        attr_max = result_df[attr_col].max()
-                                        
-                                        attribute_min_max[attr]['min'] = min(attribute_min_max[attr]['min'], attr_min)
-                                        attribute_min_max[attr]['max'] = max(attribute_min_max[attr]['max'], attr_max)
+                                # Update progress
+                                progress = completed / len(all_tasks)
+                                progress_bar.progress(progress)
+                                progress_text.text(f"Processing {completed}/{len(all_tasks)} stages...")
+                                
+                            except Exception as e:
+                                log_message(logging.ERROR, f"Error processing results for well {well_id}, stage {stage}: {str(e)}")
+                    
+                    # Clear progress indicators
+                    progress_bar.empty()
+                    progress_text.empty()
                     
                     # Check if we found valid ranges
                     valid_ranges = all(
@@ -1502,12 +1533,24 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
         try:
             with st.spinner("Calculating monotonicity ranges from dataset..."):
                 attribute_min_max = {}
-                for attr in selected_monotonic_attributes:
+                
+                # Process attributes in parallel
+                def calculate_attribute_range(attr):
                     if attr in df.columns:
-                        attribute_min_max[attr] = {
+                        return attr, {
                             'min': df[attr].min(),
                             'max': df[attr].max()
                         }
+                    return attr, None
+                
+                # Process attributes in parallel
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    results = list(executor.map(calculate_attribute_range, selected_monotonic_attributes))
+                
+                # Collect results
+                for attr, range_values in results:
+                    if range_values is not None:
+                        attribute_min_max[attr] = range_values
                 
                 if attribute_min_max:
                     monotonicity_ranges = attribute_min_max
@@ -1537,9 +1580,25 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
             st.error(f"Error calculating monotonicity ranges from dataset: {str(e)}")
             log_message(logging.ERROR, f"Error calculating monotonicity ranges from dataset: {str(e)}")
     
+    # Create dedicated containers for progress display
+    status_container = st.container()
+    
+    # Create a clear, prominent container for the R2 plot
+    with st.container():
+        st.subheader("Model Training Progress")
+        st.write("This chart shows the R² progress during model optimization:")
+        plot_placeholder = st.empty()
+        # Initialize plot with empty data to make the placeholder visible
+        if 'continuous_optimization' in st.session_state:
+            plotting.update_plot(
+                st.session_state.continuous_optimization['iterations'],
+                st.session_state.continuous_optimization['r2_values'],
+                plot_placeholder,
+                st.session_state.continuous_optimization['model_markers']
+            )
+    
     start_time = time.time()
     timer_placeholder = st.empty()
-    plot_placeholder = st.empty()
 
     # Initialize continuous optimization tracking variables
     if 'continuous_optimization' not in st.session_state:
@@ -1554,6 +1613,10 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
         try:
             with warnings.catch_warnings(record=True) as w:
                 warnings.simplefilter("always")
+                
+                with status_container:
+                    st.write(f"Starting optimization for Model {len(st.session_state.ga_optimizer['results']) + 1} of {num_models}...")
+                
                 result = run_ga_optimization(
                     df, target_column, predictors, r2_threshold, coef_range,
                     prob_crossover, prob_mutation, num_generations, population_size,
@@ -1590,17 +1653,61 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
                 result_with_predictions = (best_ind, best_r2_score, response_equation, selected_feature_names, errors_df, predicted_values, full_zscored_df, excluded_rows, full_dataset_r2)
                 
                 st.session_state.ga_optimizer['results'].append(result_with_predictions)
+                
+                with status_container:
+                    st.success(f"Model {len(st.session_state.ga_optimizer['results'])} generated (Weighted R²: {best_r2_score:.4f}, Full Dataset R²: {full_dataset_r2:.4f})")
+                
                 log_message(logging.INFO, f"Model {len(st.session_state.ga_optimizer['results'])} generated (Weighted R²: {best_r2_score:.4f}, Full Dataset R²: {full_dataset_r2:.4f})")
-                st.success(f"Model {len(st.session_state.ga_optimizer['results'])} generated (Weighted R²: {best_r2_score:.4f}, Full Dataset R²: {full_dataset_r2:.4f})")
             else:
                 log_message(logging.WARNING, "GA optimization did not produce a valid result. Retrying...")
-                st.warning("GA optimization did not produce a valid result. Retrying...")
+                with status_container:
+                    st.warning("GA optimization did not produce a valid result. Retrying...")
         except Exception as e:
             log_message(logging.ERROR, f"Error in GA optimization: {str(e)}")
 
     st.session_state.ga_optimizer['running'] = False
     log_message(logging.DEBUG, "GA optimization completed")
     st.rerun()
+
+def process_stage_data(well_id, stage, key_attributes, df_statistics):
+    """
+    Process a single stage's data to calculate attribute ranges.
+    This function is designed to be run in parallel for multiple stages.
+    
+    Args:
+        well_id: The ID of the well to process
+        stage: The stage number to process
+        key_attributes: List of attributes to calculate ranges for
+        df_statistics: Statistics for the dataset
+        
+    Returns:
+        Dictionary mapping attributes to their min/max values for this stage
+    """
+    try:
+        stage_results = {}
+        array_data = get_array_data(well_id, stage)
+        
+        if array_data is not None:
+            if not isinstance(array_data, pd.DataFrame):
+                array_data = pd.DataFrame(array_data)
+            
+            # Process array data to calculate stage metrics
+            result_df = check_monotonicity_func(array_data, df_statistics, "Corrected_Prod = 1")
+            
+            # Extract min/max values for key attributes
+            for attr in key_attributes:
+                attr_col = f"{attr}_stage"
+                if attr_col in result_df.columns:
+                    attr_min = result_df[attr_col].min()
+                    attr_max = result_df[attr_col].max()
+                    
+                    stage_results[attr] = {'min': attr_min, 'max': attr_max}
+        
+        return stage_results
+    
+    except Exception as e:
+        log_message(logging.ERROR, f"Error processing stage {stage} for well {well_id}: {str(e)}")
+        return {}
 
 if __name__ == "__main__":
     main()
