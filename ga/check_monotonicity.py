@@ -37,7 +37,13 @@ def calculate_stage(df, column, avg, std):
             df['total_slurry_dp_original'][i],
             df['tee_original'][i],
             df['total_dhppm_original'][i],
-            df['total_dh_prop_original'][i]
+            df['total_dh_prop_original'][i],
+            df['med_energy_dissipated_original'][i],
+            df['med_energy_proxy_original'][i],
+            df['med_energy_ratio_original'][i],
+            df['total_energy_dissipated_original'][i],
+            df['total_energy_proxy_original'][i],
+            df['total_energy_ratio_original'][i]
         )
         if min_value > 0:
             value = (df[column][i] - avg) / std
@@ -47,8 +53,8 @@ def calculate_stage(df, column, avg, std):
     return stage_values
 
 def check_monotonicity(array_data, df_statistics, response_equation):
-    # Create a DataFrame from array_data with correct column names
-    expected_columns = ['pmaxmin_win', 'downhole_win_prop', 'slr_win']
+    # Create a DataFrame from array_data with correct column names including new energy columns
+    expected_columns = ['pmaxmin_win', 'downhole_win_prop', 'slr_win', 'energyproxy', 'energydissipated']
     if isinstance(array_data, pd.DataFrame):
         df = array_data
     else:
@@ -59,7 +65,7 @@ def check_monotonicity(array_data, df_statistics, response_equation):
         if col not in df.columns:
             raise ValueError(f"Expected column '{col}' not found in input data")
 
-    # Calculate all parameters
+    # Calculate all original parameters
     df['median_dp_original'] = calculate_median(df['pmaxmin_win'], 5)
     df['median_dhpm_original'] = calculate_median(df['downhole_win_prop'], 0)
     df['dhppm_original'] = calculate_ratio(df['median_dhpm_original'], df['median_dp_original'])
@@ -70,12 +76,24 @@ def check_monotonicity(array_data, df_statistics, response_equation):
     df['total_dhppm_original'] = calculate_ratio(df['total_prop_original'], df['tee_original'])
     df['total_dh_prop_original'] = calculate_cumulative_sum(df['downhole_win_prop'])
     
-    # Calculate effective columns
-    df['effective_tee'] = calculate_ratio(df['tee_original'], df['total_slurry_dp_original'])
-    df['effective_mediandp'] = calculate_ratio(df['median_dp_original'], df['median_slurry_original'])
-    df['effective_total_dhppm'] = calculate_ratio(df['total_dhppm_original'], df['total_slurry_dp_original'])
-    df['effective_median_dhppm'] = calculate_ratio(df['median_dhpm_original'], df['median_slurry_original'])
-    # df['effective_total_dh_prop'] = calculate_ratio(df['total_dh_prop_original'], df['tee_original'])
+    # Calculate new MATLAB energy columns
+    # 1. med_energy_dissipated - similar to median_dp but using energydissipated
+    df['med_energy_dissipated_original'] = calculate_median(df['energydissipated'], 0)
+    
+    # 2. med_energy_proxy - similar to median_dp but using energyproxy  
+    df['med_energy_proxy_original'] = calculate_median(df['energyproxy'], 0)
+    
+    # 3. total_energy_dissipated - cumulative energydissipated
+    df['total_energy_dissipated_original'] = calculate_cumulative_sum(df['energydissipated'])
+    
+    # 4. total_energy_proxy - cumulative energyproxy
+    df['total_energy_proxy_original'] = calculate_cumulative_sum(df['energyproxy'])
+    
+    # 5. med_energy_ratio - median energy dissipated / median energy proxy
+    df['med_energy_ratio_original'] = calculate_ratio(df['med_energy_dissipated_original'], df['med_energy_proxy_original'])
+    
+    # 6. total_energy_ratio - total energy dissipated / total energy proxy
+    df['total_energy_ratio_original'] = calculate_ratio(df['total_energy_dissipated_original'], df['total_energy_proxy_original'])
 
     # Calculate stage values using statistics from df_statistics
     df['tee_stage'] = calculate_stage(df, 'tee_original', df_statistics['tee']['mean'], df_statistics['tee']['std'])
@@ -86,14 +104,26 @@ def check_monotonicity(array_data, df_statistics, response_equation):
     df['total_slurry_dp_stage'] = calculate_stage(df, 'total_slurry_dp_original', df_statistics['total_slurry_dp']['mean'], df_statistics['total_slurry_dp']['std'])
     df['median_slurry_stage'] = calculate_stage(df, 'median_slurry_original', df_statistics['median_slurry']['mean'], df_statistics['median_slurry']['std'])
     df['total_dh_prop_stage'] = calculate_stage(df, 'total_dh_prop_original', df_statistics['total_dh_prop']['mean'], df_statistics['total_dh_prop']['std'])
-
-    # Calculate Productivity
-    stage_columns = ['tee_stage', 'median_dhpm_stage', 'median_dp_stage', 'downhole_ppm_stage', 
-                     'total_dhppm_stage', 'total_slurry_dp_stage', 'median_slurry_stage', 'total_dh_prop_stage']
     
-    # All potential attributes for monotonicity check
+    # Calculate stage values for new MATLAB energy columns
+    df['med_energy_proxy_stage'] = calculate_stage(df, 'med_energy_proxy_original', df_statistics['med_energy_proxy']['mean'], df_statistics['med_energy_proxy']['std'])
+    df['med_energy_dissipated_stage'] = calculate_stage(df, 'med_energy_dissipated_original', df_statistics['med_energy_dissipated']['mean'], df_statistics['med_energy_dissipated']['std'])
+    df['med_energy_ratio_stage'] = calculate_stage(df, 'med_energy_ratio_original', df_statistics['med_energy_ratio']['mean'], df_statistics['med_energy_ratio']['std'])
+    df['total_energy_proxy_stage'] = calculate_stage(df, 'total_energy_proxy_original', df_statistics['total_energy_proxy']['mean'], df_statistics['total_energy_proxy']['std'])
+    df['total_energy_dissipated_stage'] = calculate_stage(df, 'total_energy_dissipated_original', df_statistics['total_energy_dissipated']['mean'], df_statistics['total_energy_dissipated']['std'])
+    df['total_energy_ratio_stage'] = calculate_stage(df, 'total_energy_ratio_original', df_statistics['total_energy_ratio']['mean'], df_statistics['total_energy_ratio']['std'])
+
+    # Calculate Productivity - updated to include new MATLAB energy columns
+    stage_columns = ['tee_stage', 'median_dhpm_stage', 'median_dp_stage', 'downhole_ppm_stage', 
+                     'total_dhppm_stage', 'total_slurry_dp_stage', 'median_slurry_stage', 'total_dh_prop_stage',
+                     'med_energy_proxy_stage', 'med_energy_dissipated_stage', 'med_energy_ratio_stage',
+                     'total_energy_proxy_stage', 'total_energy_dissipated_stage', 'total_energy_ratio_stage']
+    
+    # All potential attributes for monotonicity check - updated to include new MATLAB energy columns
     all_potential_attributes = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 
-                           'total_dhppm', 'total_slurry_dp', 'median_slurry', 'total_dh_prop']
+                           'total_dhppm', 'total_slurry_dp', 'median_slurry', 'total_dh_prop',
+                           'med_energy_proxy', 'med_energy_dissipated', 'med_energy_ratio',
+                           'total_energy_proxy', 'total_energy_dissipated', 'total_energy_ratio']
     
     # Calculate Productivity using the provided equation
     df['Productivity'] = df.apply(lambda row: calculate_productivity(row, stage_columns, response_equation), axis=1)
@@ -135,8 +165,8 @@ def check_monotonicity(array_data, df_statistics, response_equation):
         'median_dp_original', 'median_dhpm_original', 'dhppm_original',
         'median_slurry_original', 'total_slurry_dp_original', 'tee_original',
         'total_prop_original', 'total_dhppm_original', 'total_dh_prop_original',
-        'effective_tee', 'effective_mediandp', 'effective_total_dhppm',
-        'effective_median_dhppm'
+        'med_energy_proxy_original', 'med_energy_dissipated_original', 'med_energy_ratio_original',
+        'total_energy_proxy_original', 'total_energy_dissipated_original', 'total_energy_ratio_original'
     ]].copy()
 
     return df

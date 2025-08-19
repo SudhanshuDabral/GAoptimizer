@@ -68,7 +68,7 @@ def initialize_ga_state():
             'selected_wells': [],
             'coef_range': (-10.0, 10.0),
             'num_models': 3,
-            'selected_monotonic_attributes': ['downhole_ppm', 'total_dhppm', 'tee'],
+            'selected_monotonic_attributes': ['downhole_ppm', 'total_dhppm', 'tee', 'med_energy_proxy', 'total_energy_proxy'],
         }
 
 def start_ga_optimization_callback():
@@ -175,7 +175,9 @@ def ga_optimization_section():
                         
                         required_columns = ['well name', 'stage', 'tee', 'median_dhpm', 'median_dp', 
                                          'downhole_ppm', 'total_dhppm', 'total_slurry_dp', 
-                                         'median_slurry', 'total_dh_prop', 'productivity']
+                                         'median_slurry', 'total_dh_prop', 'productivity',
+                                         'med_energy_proxy', 'med_energy_dissipated', 'med_energy_ratio',
+                                         'total_energy_proxy', 'total_energy_dissipated', 'total_energy_ratio']
                         
                         # Convert actual columns to lowercase for comparison
                         actual_columns = [col.lower() for col in df.columns]
@@ -197,7 +199,13 @@ def ga_optimization_section():
                             'total_slurry_dp': 'total_slurry_dp',
                             'median_slurry': 'median_slurry',
                             'total_dh_prop': 'total_dh_prop',
-                            'productivity': 'Productivity'
+                            'productivity': 'Productivity',
+                            'med_energy_proxy': 'med_energy_proxy',
+                            'med_energy_dissipated': 'med_energy_dissipated',
+                            'med_energy_ratio': 'med_energy_ratio',
+                            'total_energy_proxy': 'total_energy_proxy',
+                            'total_energy_dissipated': 'total_energy_dissipated',
+                            'total_energy_ratio': 'total_energy_ratio'
                         }
                         df = df.rename(columns=rename_mapping)
                         
@@ -363,11 +371,13 @@ def ga_optimization_section():
                     
                     monotonicity_attributes = [
                         "tee", "median_dhpm", "median_dp", "median_slurry", 
-                        "total_slurry_dp", "downhole_ppm", "total_dhppm", "total_dh_prop"
+                        "total_slurry_dp", "downhole_ppm", "total_dhppm", "total_dh_prop",
+                        "med_energy_proxy", "med_energy_dissipated", "med_energy_ratio",
+                        "total_energy_proxy", "total_energy_dissipated", "total_energy_ratio"
                     ]
                     
-                    # Set default selections - the original three key attributes
-                    default_selections = ["downhole_ppm", "total_dhppm", "tee"]
+                    # Set default selections - the original three key attributes plus key energy attributes
+                    default_selections = ["downhole_ppm", "total_dhppm", "tee", "med_energy_proxy", "total_energy_proxy"]
                     
                     selected_monotonic_attributes = st.multiselect(
                         "Select Attributes for Monotonicity Check",
@@ -529,21 +539,19 @@ def fetch_consolidated_data(well_ids):
             data = get_modeling_data(well_id)
             df = pd.DataFrame(data)
             if not df.empty:
-                # Calculate all effective columns
-                df['effective_tee'] = df['tee'] / df['total_slurry_dp']
-                df['effective_mediandp'] = df['median_dp'] / df['median_slurry']
-                df['effective_total_dhppm'] = df['total_dhppm'] / df['total_slurry_dp']
-                df['effective_median_dhppm'] = df['median_dhpm'] / df['median_slurry']
-                df['effective_total_dh_prop'] = df['total_dh_prop'] / df['total_slurry_dp']
+                # Add new MATLAB-derived columns (6 energy-related attributes)
+                # These columns should already be in the database from the data_prep processing
+                matlab_columns = ['med_energy_proxy', 'med_energy_dissipated', 'med_energy_ratio', 
+                                'total_energy_proxy', 'total_energy_dissipated', 'total_energy_ratio']
                 
-                # Handle potential division by zero or infinity for all effective columns
-                effective_columns = ['effective_tee', 'effective_mediandp', 
-                                  'effective_total_dhppm', 'effective_median_dhppm',
-                                  'effective_total_dh_prop']
-                
-                for col in effective_columns:
-                    df[col] = df[col].replace([np.inf, -np.inf], np.nan)
-                    df[col] = df[col].fillna(0)
+                # Handle any missing values in the new columns
+                for col in matlab_columns:
+                    if col in df.columns:
+                        df[col] = df[col].replace([np.inf, -np.inf], np.nan)
+                        df[col] = df[col].fillna(0)
+                    else:
+                        # If column doesn't exist, set to 0 (for backward compatibility)
+                        df[col] = 0.0
                 
                 well_name = next(well['well_name'] for well in get_well_details() if well['well_id'] == well_id)
                 df['Well Name'] = well_name
@@ -1392,6 +1400,12 @@ def sensitivity_test_section():
 
 # Genetic Algorithm Optimization
 def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_range, prob_crossover, prob_mutation, num_generations, population_size, excluded_rows, regression_type, num_models, monotonicity_target):
+    # Check if df is None
+    if df is None:
+        st.error("No Z-scored data available. Please ensure you have uploaded data and clicked 'Z-Score Data' before running GA optimization.")
+        log_message(logging.ERROR, "GA optimization called with None dataframe")
+        return
+    
     full_zscored_df = df.copy()
     
     # Filter out excluded rows based on the format of excluded_rows
@@ -1413,10 +1427,10 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
     # Get selected monotonic attributes from session state
     selected_monotonic_attributes = st.session_state.ga_optimizer.get('selected_monotonic_attributes', None)
     
-    # If no attributes were explicitly selected, use the default key attributes
+    # If no attributes were explicitly selected, use the default key attributes including energy attributes
     if not selected_monotonic_attributes:
-        selected_monotonic_attributes = ['downhole_ppm', 'total_dhppm', 'tee']
-        st.warning("Using default attributes for monotonicity check: downhole_ppm, total_dhppm, tee")
+        selected_monotonic_attributes = ['downhole_ppm', 'total_dhppm', 'tee', 'med_energy_proxy', 'total_energy_proxy']
+        st.warning("Using default attributes for monotonicity check: downhole_ppm, total_dhppm, tee, med_energy_proxy, total_energy_proxy")
     
     # Process selected wells for monotonicity range determination
     monotonicity_ranges = None

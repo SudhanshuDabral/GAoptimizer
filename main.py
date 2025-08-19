@@ -118,7 +118,7 @@ def login():
     st.markdown("<h1 style='text-align: center;'>Analysis made easy</h1>", unsafe_allow_html=True)
 
     name, authentication_status, username = authenticator.login(
-        'Login',
+        fields={'Form name': 'Login'},
         location='main'
     )
 
@@ -194,7 +194,7 @@ def navigation():
         st.markdown("<br>" * 3, unsafe_allow_html=True)
         st.markdown('<hr style="margin: 20px 0;">', unsafe_allow_html=True)
 
-        if authenticator.logout('Logout', 'main'):
+        if authenticator.logout(button_name='Logout', location='main'):
             log_message(logging.INFO, "User logged out")
             st.rerun()
 

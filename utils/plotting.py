@@ -88,7 +88,7 @@ def plot_r2_vs_iteration():
     
 def plot_column(df, stage):
     """
-    Create a line plot for Productivity, total_dhppm_stage, and total_slurry_dp_stage.
+    Create a line plot for Productivity and key stage attributes including energy columns.
     
     :param df: pandas DataFrame containing the data
     :param stage: str or int, the stage number
@@ -96,8 +96,9 @@ def plot_column(df, stage):
     """
     fig = go.Figure()
 
-    columns_to_plot = ['Productivity', 'total_dhppm_stage', 'total_slurry_dp_stage']
-    colors = ['green', 'red', 'blue']
+    # Enhanced columns including new MATLAB energy attributes
+    columns_to_plot = ['Productivity', 'total_dhppm_stage', 'total_slurry_dp_stage', 'total_energy_proxy_stage', 'total_energy_dissipated_stage']
+    colors = ['green', 'red', 'blue', 'orange', 'purple']
 
     for i, (column, color) in enumerate(zip(columns_to_plot, colors)):
         if column in df.columns:
@@ -113,7 +114,7 @@ def plot_column(df, stage):
             print(f"Warning: Column '{column}' not found in the DataFrame")
 
     fig.update_layout(
-        title=f'Productivity, Total DHPPM, and Total Slurry DP for Stage {stage}',
+        title=f'Productivity and Key Attributes (including Energy Metrics) for Stage {stage}',
         xaxis_title='Index',
         yaxis=dict(
             title='Productivity',
@@ -121,7 +122,7 @@ def plot_column(df, stage):
             tickfont=dict(color="green")
         ),
         yaxis2=dict(
-            title='DHPPM / Slurry DP',
+            title='Stage Attributes (DHPPM, Slurry DP, Energy Metrics)',
             titlefont=dict(color="red"),
             tickfont=dict(color="red"),
             overlaying='y',

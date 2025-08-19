@@ -32,8 +32,9 @@ def zscore_data(df):
 # function to calculate statistics for the original data for modelling used in ga_main.py
 def calculate_df_statistics(df):
     columns_to_process = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 
-                         'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp',
-                         'effective_total_dhppm', 'effective_median_dhppm', 'total_dh_prop']
+                         'total_slurry_dp', 'median_slurry', 'total_dh_prop',
+                         'med_energy_proxy', 'med_energy_dissipated', 'med_energy_ratio',
+                         'total_energy_proxy', 'total_energy_dissipated', 'total_energy_ratio']
     stats = {}
     for col in columns_to_process:
         if col in df.columns:
@@ -48,8 +49,9 @@ def calculate_df_statistics(df):
 
 def calculate_zscoredf_statistics(df):
     columns_to_process = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 
-                         'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp',
-                         'effective_total_dhppm', 'effective_median_dhppm', 'total_dh_prop']
+                         'total_slurry_dp', 'median_slurry', 'total_dh_prop',
+                         'med_energy_proxy', 'med_energy_dissipated', 'med_energy_ratio',
+                         'total_energy_proxy', 'total_energy_dissipated', 'total_energy_ratio']
     stats = {}
     for col in columns_to_process:
         if col in df.columns:
@@ -99,24 +101,17 @@ def calculate_productivity(values, response_equation):
 
 def calculate_model_sensitivity(response_equation, zscored_statistics):
     try:
-        # Get median values for all attributes including all effective columns
+        # Get median values for all attributes including new energy attributes
         median_values = {attr: stats['median'] for attr, stats in zscored_statistics.items()}
         
-        # Ensure all effective columns are in median_values
-        effective_columns = {
-            'effective_tee': ('tee', 'total_slurry_dp'),
-            'effective_mediandp': ('median_dp', 'median_slurry'),
-            'effective_total_dhppm': ('total_dhppm', 'total_slurry_dp'),
-            'effective_median_dhppm': ('median_dhpm', 'median_slurry')
-        }
+        # Ensure all energy attributes are properly handled
+        energy_attributes = ['med_energy_proxy', 'med_energy_dissipated', 'med_energy_ratio',
+                           'total_energy_proxy', 'total_energy_dissipated', 'total_energy_ratio']
         
-        for eff_col, (num_col, den_col) in effective_columns.items():
-            if eff_col not in median_values:
-                print(f"Warning: {eff_col} not found in statistics")
-                if num_col in median_values and den_col in median_values:
-                    median_values[eff_col] = median_values[num_col] / median_values[den_col]
-                else:
-                    median_values[eff_col] = 0
+        for energy_attr in energy_attributes:
+            if energy_attr not in median_values:
+                print(f"Warning: {energy_attr} not found in statistics, setting to 0")
+                median_values[energy_attr] = 0
         
         # Calculate baseline productivity using median values
         baseline_productivity = calculate_productivity(median_values, response_equation)
@@ -131,10 +126,11 @@ def calculate_model_sensitivity(response_equation, zscored_statistics):
         # Define the percentage change for sensitivity analysis
         percent_change = 0.1  # 10% change
         
-        # List of attributes to analyze
+        # List of attributes to analyze (including new energy attributes)
         attributes = ['tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 
-                     'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp',
-                     'effective_total_dhppm', 'effective_median_dhppm', 'total_dh_prop']
+                     'total_slurry_dp', 'median_slurry', 'total_dh_prop',
+                     'med_energy_proxy', 'med_energy_dissipated', 'med_energy_ratio',
+                     'total_energy_proxy', 'total_energy_dissipated', 'total_energy_ratio']
         
         for attr in attributes:
             if attr in zscored_statistics:
@@ -232,8 +228,9 @@ def validate_custom_equation(equation):
     """
     valid_features = [
         'tee', 'median_dhpm', 'median_dp', 'downhole_ppm', 'total_dhppm', 
-        'total_slurry_dp', 'median_slurry', 'effective_tee', 'effective_mediandp',
-        'effective_total_dhppm', 'effective_median_dhppm', 'total_dh_prop'
+        'total_slurry_dp', 'median_slurry', 'total_dh_prop',
+        'med_energy_proxy', 'med_energy_dissipated', 'med_energy_ratio',
+        'total_energy_proxy', 'total_energy_dissipated', 'total_energy_ratio'
     ]
     
     # Check if equation starts with "Corrected_Prod ="
@@ -252,7 +249,7 @@ def validate_custom_equation(equation):
             
         # Extract features from the term (ignore coefficients and operators)
         # This regex looks for words (features) after any numbers, operators, or parentheses
-        features = re.findall(r'(?:^|[-+*/\s])((?:effective_)?[a-zA-Z_]+)(?:\s*(?:\*|\+|-|$))', term)
+        features = re.findall(r'(?:^|[-+*/\s])([a-zA-Z_]+)(?:\s*(?:\*|\+|-|$))', term)
         
         # Validate each feature
         for feature in features:

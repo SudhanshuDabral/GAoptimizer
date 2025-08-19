@@ -2,7 +2,15 @@ import os
 import uuid
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from streamlit_authenticator import Hasher
+try:
+    from streamlit_authenticator import Hasher
+except ImportError:
+    try:
+        # For newer versions of streamlit_authenticator (0.3.2+)
+        from streamlit_authenticator.utilities.hasher import Hasher
+    except ImportError:
+        # Alternative import path
+        from streamlit_authenticator.utilities import Hasher
 import streamlit as st
 import json
 import pandas as pd
@@ -92,12 +100,14 @@ def update_modeling_data(well_id, consolidated_output, user_id):
         # Update existing records and insert new ones
         for row in consolidated_output:
             if row['Stages'] in existing_stages:
-                # Update existing record
+                # Update existing record with new MATLAB-derived columns
                 update_query = """
                 UPDATE data_for_modeling 
                 SET tee = %s, median_dhpm = %s, median_dp = %s, downhole_ppm = %s, 
                     total_dhppm = %s, total_slurry_dp = %s, median_slurry = %s, 
-                    total_dh_prop = %s, updated_by = %s, updated_on = CURRENT_TIMESTAMP
+                    total_dh_prop = %s, med_energy_proxy = %s, med_energy_dissipated = %s,
+                    med_energy_ratio = %s, total_energy_proxy = %s, total_energy_dissipated = %s,
+                    total_energy_ratio = %s, updated_by = %s, updated_on = CURRENT_TIMESTAMP
                 WHERE well_id = %s AND stage = %s
                 RETURNING data_id, stage
                 """
@@ -110,17 +120,25 @@ def update_modeling_data(well_id, consolidated_output, user_id):
                     row['TotalSlurryDP'],
                     row['MedianSlurry'],
                     row['TotalDHProp'],
+                    row.get('MedEnergyProxy'),
+                    row.get('MedEnergyDissipated'),
+                    row.get('MedRatio'),
+                    row.get('TotalEnergyProxy'),
+                    row.get('TotalEnergyDissipated'),
+                    row.get('TotalEnergyRatio'),
                     user_id,
                     well_id,
                     row['Stages']
                 ))
             else:
-                # Insert new record
+                # Insert new record with new MATLAB-derived columns
                 insert_query = """
                 INSERT INTO data_for_modeling 
                 (well_id, tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, 
-                 total_slurry_dp, median_slurry, total_dh_prop, stage, updated_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 total_slurry_dp, median_slurry, total_dh_prop, stage, med_energy_proxy,
+                 med_energy_dissipated, med_energy_ratio, total_energy_proxy, 
+                 total_energy_dissipated, total_energy_ratio, updated_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING data_id, stage
                 """
                 cur.execute(insert_query, (
@@ -134,6 +152,12 @@ def update_modeling_data(well_id, consolidated_output, user_id):
                     row['MedianSlurry'],
                     row['TotalDHProp'],
                     row['Stages'],
+                    row.get('MedEnergyProxy'),
+                    row.get('MedEnergyDissipated'),
+                    row.get('MedRatio'),
+                    row.get('TotalEnergyProxy'),
+                    row.get('TotalEnergyDissipated'),
+                    row.get('TotalEnergyRatio'),
                     user_id
                 ))
 
@@ -205,13 +229,15 @@ def call_insert_arrays_data(data_id, arrays_data, user_id):
                 row['SlrWin'],
                 row['PmaxminWin'],
                 row['DownholeWinProp'],
+                row.get('EnergyProxy', None),  # New column
+                row.get('EnergyDissipated', None),  # New column
                 user_id
             ))
 
         psycopg2.extras.execute_batch(cur, 
             """
-            INSERT INTO arrays (data_id, window_iteration, slr_win, pmaxmin_win, downhole_win_prop, updated_by)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO arrays (data_id, window_iteration, slr_win, pmaxmin_win, downhole_win_prop, energyproxy, energydissipated, updated_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """, 
             arrays_data_tuples)
 
@@ -270,7 +296,10 @@ def get_modeling_data(well_id):
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("""
-            SELECT data_id, well_id, tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, total_slurry_dp, median_slurry, total_dh_prop, stage
+            SELECT data_id, well_id, tee, median_dhpm, median_dp, downhole_ppm, total_dhppm, 
+                   total_slurry_dp, median_slurry, total_dh_prop, stage, med_energy_proxy,
+                   med_energy_dissipated, med_energy_ratio, total_energy_proxy, 
+                   total_energy_dissipated, total_energy_ratio
             FROM data_for_modeling
             WHERE well_id = %s
             ORDER BY stage ASC
@@ -306,7 +335,7 @@ def get_array_data(well_id, stage):
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute("""
-        SELECT a.window_iteration, a.slr_win, a.pmaxmin_win, a.downhole_win_prop
+        SELECT a.window_iteration, a.slr_win, a.pmaxmin_win, a.downhole_win_prop, a.energyproxy, a.energydissipated
         FROM arrays a
         JOIN data_for_modeling d ON a.data_id = d.data_id
         WHERE d.well_id = %s AND d.stage = %s

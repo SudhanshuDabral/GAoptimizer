@@ -4,8 +4,87 @@ import pandas as pd
 import numpy as np
 import os
 import re
+import logging
+from scipy import signal
+from scipy.ndimage import median_filter
 from utils.db import (update_modeling_data, call_insert_arrays_data, 
                       create_new_well, get_well_details, bulk_insert_well_completion_records, log_message)
+
+def apply_butterworth_denoising(pressure_data, window_size=11, hop_size=5, order=1, cutoff=0.5):
+    """
+    Apply Butterworth filter denoising with windowed approach, mimicking MATLAB implementation.
+    
+    Parameters:
+    - pressure_data: numpy array of pressure values
+    - window_size: window size for filtering (should be odd)
+    - hop_size: hop size for overlapping windows
+    - order: Butterworth filter order
+    - cutoff: normalized cutoff frequency (0 < cutoff < 1) - MATLAB Wn parameter
+    
+    Returns:
+    - denoised_pressure: filtered pressure data
+    - signal_denoised: boolean flag indicating if filtering was applied
+    """
+    n = len(pressure_data)
+    signal_denoised = False
+    
+    try:
+        # MATLAB: [b,a] = butter(order, Wn, 'low') where Wn = 0.5
+        # In MATLAB, Wn is already normalized (0 < Wn < 1)
+        # In scipy, we need to ensure the cutoff is valid
+        if not (0 < cutoff < 1):
+            raise ValueError(f"Cutoff frequency must be between 0 and 1, got {cutoff}")
+            
+        b, a = signal.butter(order, cutoff, btype='low', analog=False)
+        
+        denoised_sum = np.zeros(n)
+        denoised_weight = np.zeros(n)
+        
+        # Apply windowed filtering with overlap (following MATLAB logic exactly)
+        # MATLAB: for i = 1:hop:(N - WS + 1)
+        for i in range(0, n - window_size + 1, hop_size):
+            # MATLAB: idxw = i:(i + WS - 1)
+            idx_start = i
+            idx_end = i + window_size
+            window_data = pressure_data[idx_start:idx_end]
+            
+            # MATLAB: if numel(win) >= 3
+            if len(window_data) >= 3:
+                # MATLAB: filtered = filtfilt(b, a, win)
+                filtered_window = signal.filtfilt(b, a, window_data)
+            else:
+                filtered_window = window_data  # too short to filter
+            
+            # MATLAB: denoised_sum(idxw) = denoised_sum(idxw) + filtered(:)
+            denoised_sum[idx_start:idx_end] += filtered_window
+            denoised_weight[idx_start:idx_end] += 1
+        
+        # MATLAB: denoised_Pres = denoised_sum ./ max(denoised_weight,1)
+        denoised_pressure = denoised_sum / np.maximum(denoised_weight, 1)
+        
+        # MATLAB: Global fallback where weight==0
+        zero_weight_mask = denoised_weight == 0
+        if np.any(zero_weight_mask):
+            # MATLAB: if numel(Pres) >= 3, global_filtered = filtfilt(b,a,Pres)
+            if len(pressure_data) >= 3:
+                global_filtered = signal.filtfilt(b, a, pressure_data)
+            else:
+                global_filtered = pressure_data
+            denoised_pressure[zero_weight_mask] = global_filtered[zero_weight_mask]
+        
+        signal_denoised = True
+        
+    except Exception as e:
+        # MATLAB fallback: denoised_Pres = movmedian(Pres, WS, 'omitnan')
+        # Use median filter as fallback (equivalent to MATLAB's movmedian)
+        try:
+            denoised_pressure = median_filter(pressure_data.astype(float), size=window_size, mode='reflect')
+        except:
+            # Ultimate fallback - return original data
+            denoised_pressure = pressure_data.copy()
+        signal_denoised = False
+    
+    return denoised_pressure, signal_denoised
 
 def initialize_data_prep_state():
     if 'data_prep' not in st.session_state:
@@ -143,23 +222,10 @@ def main(authentication_status):
 
         uploaded_files = st.file_uploader("Upload CSV files", accept_multiple_files=True, type=["csv"])
 
-        # Debug: Check uploaded_files content before the main condition
-        st.write(f"Debug: uploaded_files type: {type(uploaded_files)}")
-        st.write(f"Debug: uploaded_files content: {uploaded_files}")
-
         if uploaded_files:
-            # Debug: Check processing_files flag state inside if uploaded_files
-            st.write(f"Debug: Inside 'if uploaded_files'. processing_files flag: {st.session_state.data_prep.get('processing_files', 'Not Set')}")
-
             if not st.session_state.data_prep['processing_files']:
                 st.session_state.data_prep['processing_files'] = True
-                st.write("Calling process_files...") # Debug print
                 process_files(uploaded_files, well_details)
-                st.write("Finished process_files.")
-                if isinstance(st.session_state.data_prep.get('consolidated_output'), pd.DataFrame):
-                    st.write(f"Is consolidated_output empty? {st.session_state.data_prep['consolidated_output'].empty}")
-                    st.write("Consolidated Output Head:")
-                    st.dataframe(st.session_state.data_prep['consolidated_output'].head())
                 st.session_state.data_prep['processing_files'] = False
 
             # Show the consolidated results in a table
@@ -193,7 +259,6 @@ def extract_stage(filename):
 
 def process_files(files, well_details):
     all_results = pd.DataFrame()
-    st.write(f"Initial all_results is empty: {all_results.empty}")
 
     user_id = st.session_state.user_id
     user_dir = os.path.join('export', str(user_id))
@@ -221,7 +286,6 @@ def process_files(files, well_details):
         # Load the CSV file using column headers
         try:
             data = pd.read_csv(temp_file_path)
-            st.write(f"Successfully read {file.name} for stage {stage}")
         except Exception as e:
             st.error(f"Error reading CSV file {file.name}: {e}")
             os.remove(temp_file_path)
@@ -248,10 +312,17 @@ def process_files(files, well_details):
             os.remove(temp_file_path)
             continue
 
-        # Extract data using column headers
+        # Extract data using column headers (following MATLAB column requirements)
+        # MATLAB requires: "treating_pressure_fv","slurry_rate","bottomhole_prop_mass"
         try:
             SlRate = data['slurry_rate'].values
-            Pres = data['treating_pressure'].values
+            # Handle different pressure column names
+            if 'treating_pressure_fv' in data.columns:
+                Pres = data['treating_pressure_fv'].values
+            elif 'treating_pressure' in data.columns:
+                Pres = data['treating_pressure'].values
+            else:
+                raise KeyError("Neither 'treating_pressure_fv' nor 'treating_pressure' found")
         except KeyError as e:
             st.error(f"Missing required column in {file.name}: {e}")
             os.remove(temp_file_path)
@@ -270,8 +341,11 @@ def process_files(files, well_details):
             os.remove(temp_file_path)
             continue
 
+        # Use the correct pressure column name for database insertion
+        pressure_col_name = 'treating_pressure_fv' if 'treating_pressure_fv' in data.columns else 'treating_pressure'
+        
         completion_data = pd.DataFrame({
-            'treating_pressure': data['treating_pressure'],
+            'treating_pressure': data[pressure_col_name],
             'slurry_rate': data['slurry_rate'],
             'bottomhole_prop_mass': DownHoleProp,
             'time_seconds': T.astype(int),
@@ -293,53 +367,146 @@ def process_files(files, well_details):
         DownHoleProp = DownHoleProp[IndexS]
 
         n = len(T)
+        
+        # Apply Butterworth denoising to pressure data (mimicking MATLAB implementation)
+        Pres, signal_denoised = apply_butterworth_denoising(Pres)
 
         WS = 11  # Window size, should always be odd
         MP = (WS + 1) // 2
 
-        # Initialize arrays
-        LI = np.zeros(n, dtype=int)
-        UL = np.zeros(n, dtype=int)
+        # Initialize arrays (following MATLAB structure)
         SlpeSR = np.zeros((2, n))  # polyfit results have 2 coefficients
         SumSLR = np.zeros(n)
         WinProp = np.zeros(n)
         Pmaxmin = np.zeros(n)
         SlpeP = np.zeros((2, n))
+        PreWinSlurry = np.zeros(n)
+        PreWinPmaxmin = np.zeros(n)
 
-        for i in range(n):
-            LI[i] = (MP + (i - 1) * (MP - 1))-1
-            UL[i] = (MP + (i - 1) * (MP - 1) + WS - 1)
-            if UL[i] > n:
+        lastValid = 0
+        # MATLAB: for i = 1:n (1-based indexing)
+        # Python: for i in range(1, n+1) to match MATLAB's 1-based loop
+        for i in range(1, n + 1):
+            # MATLAB: LI = MP + (i-2)*(MP-1); UL = MP + (i-2)*(MP-1) + WS - 1;
+            # Direct translation (MP is already calculated as (WS+1)//2)
+            LI = MP + (i - 2) * (MP - 1)
+            UL = MP + (i - 2) * (MP - 1) + WS - 1
+            
+            # MATLAB: if UL > n || LI < 1, break; end
+            # Convert to Python 0-based: LI < 1 becomes LI < 0, UL > n stays same
+            if UL > n or LI < 1:
                 break
-            coef_SR = np.polyfit(T[LI[i]:UL[i]], SlRate[LI[i]:UL[i]], 1)
-            coef_P = np.polyfit(T[LI[i]:UL[i]], Pres[LI[i]:UL[i]], 1)
-            SlpeSR[:, i] = coef_SR
-            SlpeP[:, i] = coef_P
-            SumSLR[i] = np.sum(SlRate[LI[i]:UL[i]]) * 0.7
-            WinProp[i] = np.sum(DownHoleProp[LI[i]:UL[i]])
-            Pmaxmin[i] = np.max(Pres[LI[i]:UL[i]]) - np.min(Pres[LI[i]:UL[i]])
+            lastValid = i
+            
+            # Convert MATLAB 1-based indices to Python 0-based for array access
+            LI_py = LI - 1  # Convert to 0-based
+            UL_py = UL      # UL is exclusive in Python slicing
+            
+            # MATLAB: xw = (LI:UL)'; yS = SlRate(LI:UL); etc.
+            xw = np.arange(LI, UL + 1)  # MATLAB includes both endpoints
+            yS = SlRate[LI_py:UL_py]
+            yP = Pres[LI_py:UL_py]
+            yM = DownHoleProp[LI_py:UL_py]
+            
+            # MATLAB: SlpeSR(:,i) = polyfit(xw, yS, 1);
+            coef_SR = np.polyfit(xw, yS, 1)
+            coef_P = np.polyfit(xw, yP, 1)
+            SlpeSR[:, i-1] = coef_SR  # Convert i to 0-based for Python array
+            SlpeP[:, i-1] = coef_P
+            
+            # MATLAB: SumSLR(i) = sum(yS)*0.7;
+            SumSLR[i-1] = np.sum(yS) * 0.7  # Convert i to 0-based
+            WinProp[i-1] = np.sum(yM)
+            Pmaxmin[i-1] = np.max(yP) - np.min(yP)
+            
+            # MATLAB: if i > 1
+            if i > 1:
+                # MATLAB: PrevLI = LI - WS; PrevUL = LI - 1;
+                PrevLI = LI - WS
+                PrevUL = LI - 1
+                # MATLAB: if PrevLI >= 1
+                if PrevLI >= 1:
+                    # Convert to Python 0-based indexing
+                    PrevLI_py = PrevLI - 1
+                    PrevUL_py = PrevUL  # Exclusive end
+                    ySprev = SlRate[PrevLI_py:PrevUL_py]
+                    yPprev = Pres[PrevLI_py:PrevUL_py]
+                    PreWinSlurry[i-1] = np.sum(ySprev) * 0.7
+                    PreWinPmaxmin[i-1] = np.max(yPprev) - np.min(yPprev)
 
-        # Additional processing and result storage
-        SumSLR = SumSLR.T
-        Pmaxmin = Pmaxmin.T
-        dpdt = SlpeP[0, :]
-        drdp = SlpeSR[0, :] / SlpeP[0, :]
-        dpdt = dpdt.T
-        drdp = drdp.T
+        # MATLAB: if lastValid == 0, warning(...); continue; end
+        if lastValid == 0:
+            st.warning(f'Skipping {file.name}: not enough samples for window size {WS}.')
+            os.remove(temp_file_path)
+            continue
+            
+        # MATLAB: rngIdx = 1:lastValid;
+        # MATLAB: SumSLR = SumSLR(rngIdx)'; Pmaxmin = Pmaxmin(rngIdx)'; WinProp = WinProp(rngIdx)';
+        # Convert to Python 0-based indexing
+        rng_idx = slice(0, lastValid)  # lastValid is already 1-based from MATLAB loop
+        SumSLR = SumSLR[rng_idx]
+        Pmaxmin = Pmaxmin[rng_idx]
+        WinProp = WinProp[rng_idx]
+        
+        # MATLAB: dpdt = SlpeP(1,rngIdx)'; dSdt = SlpeSR(1,rngIdx)';
+        dpdt = SlpeP[0, rng_idx]  # MATLAB's 1st row becomes 0th row in Python
+        dSdt = SlpeSR[0, rng_idx]
+        PreWinSlurry = PreWinSlurry[rng_idx]
+        PreWinPmaxmin = PreWinPmaxmin[rng_idx]
+        
+        # MATLAB: drdp = dSdt ./ dpdt
+        # Handle division by zero safely before MATLAB's isfinite check
+        with np.errstate(divide='ignore', invalid='ignore'):
+            drdp = dSdt / dpdt
+        
+        # MATLAB: Replace non-finite slopes/ratios
+        # dpdt(~isfinite(dpdt)) = 0; drdp(~isfinite(drdp)) = 0;
+        dpdt[~np.isfinite(dpdt)] = 0
+        drdp[~np.isfinite(drdp)] = 0
 
         C = len(drdp)
         count = np.zeros(C)
-        PropsWin = np.zeros(C)
         SlrWin = np.zeros(C)
         PmaxminWin = np.zeros(C)
         DownholeWinProp = np.zeros(C)
+        EnergyProxy = np.zeros(C)
+        EnergyDissipated = np.zeros(C)
+        SumPreWinSlurry = np.zeros(C)
+        SumPreWinPmaxmin = np.zeros(C)
 
+        # MATLAB: for j = 1:C (1-based indexing)
+        # Convert to Python 0-based but maintain MATLAB logic
         for j in range(C):
-            if drdp[j] <= 0 and dpdt[j] < 0:
+            # MATLAB: isAnalysis = (drdp(j) <= 0) && (dpdt(j) < 0);
+            isAnalysis = (drdp[j] <= 0) and (dpdt[j] < 0)
+            if isAnalysis:
                 count[j] = 1
                 SlrWin[j] = SumSLR[j]
                 PmaxminWin[j] = Pmaxmin[j]
                 DownholeWinProp[j] = WinProp[j]
+                
+                # MATLAB: accumulate preceding non-analysis windows
+                # k = j - 1; sS = 0; sP = 0;
+                # while k >= 1
+                k = j - 1  # Convert j to match MATLAB's j-1
+                sS = 0  # sum of slurry
+                sP = 0  # sum of pressure
+                while k >= 0:  # MATLAB's k >= 1 becomes k >= 0 in Python
+                    # MATLAB: if ~((drdp(k)<=0) && (dpdt(k)<0))
+                    if not ((drdp[k] <= 0) and (dpdt[k] < 0)):
+                        # MATLAB: sS = sS + PreWinSlurry(k); sP = sP + PreWinPmaxmin(k);
+                        sS += PreWinSlurry[k]
+                        sP += PreWinPmaxmin[k]
+                    else:
+                        break
+                    k -= 1  # MATLAB: k = k - 1;
+                
+                SumPreWinSlurry[j] = sS
+                SumPreWinPmaxmin[j] = sP
+                
+                # MATLAB: EnergyProxy(j) = sS * sP; EnergyDissipated(j) = SlrWin(j) * PmaxminWin(j);
+                EnergyProxy[j] = sS * sP
+                EnergyDissipated[j] = SlrWin[j] * PmaxminWin[j]
 
         # After calculating count array, get the number of windows
         num_windows = np.sum(count > 0)  # Count number of windows where count is 1
@@ -347,31 +514,68 @@ def process_files(files, well_details):
         # Create window iteration numbers for valid windows
         window_iterations = np.arange(1, num_windows + 1)
 
-        # Save arrays data to CSV with window iteration
+        # Save arrays data to CSV with window iteration including energy columns
         result_arrays_df = pd.DataFrame({
             'window_iteration': window_iterations,
             'SlrWin': SlrWin[count > 0],
             'PmaxminWin': PmaxminWin[count > 0],
-            'DownholeWinProp': DownholeWinProp[count > 0]
+            'DownholeWinProp': DownholeWinProp[count > 0],
+            'EnergyProxy': EnergyProxy[count > 0],
+            'EnergyDissipated': EnergyDissipated[count > 0]
         })
 
         output_array_file_path = os.path.join(user_dir, f'{stage}_arrays.csv')
         result_arrays_df.to_csv(output_array_file_path, index=False)
 
-        TotalPres = np.sum(PmaxminWin)
-        TotalSlurryDP = np.sum(SlrWin)
-        TotalDHProp = np.sum(DownholeWinProp)
-        MedianDP = np.median(PmaxminWin[PmaxminWin > 5])
-        MedianSlry = np.median(SlrWin[SlrWin > 0])
-        FinalDownHoleWinProp = DownholeWinProp[PmaxminWin > 0]
-        MedDHProp = np.median(FinalDownHoleWinProp[FinalDownHoleWinProp > 0])
+        # Statistics calculation (following MATLAB approach)
+        Y = np.sum(count == 1)  # Number of analysis windows
+        fracdecP = Y / C  # Fraction of decreasing pressure windows
+        AnlWind = Y  # Analysis windows count
+        
+        # Original calculations
+        TotalPres = np.nansum(PmaxminWin)
+        TotalSlurryDP = np.nansum(SlrWin)
+        TotalDHProp = np.nansum(DownholeWinProp)
+        
+        # Median calculations with proper masking (following MATLAB logic)
+        medMaskDP = PmaxminWin > 5
+        MedianDP = np.median(PmaxminWin[medMaskDP]) if np.any(medMaskDP) else np.nan
+        MedianSlry = np.median(SlrWin[SlrWin > 0]) if np.any(SlrWin > 0) else np.nan
+        
+        FinalDH = DownholeWinProp[PmaxminWin > 0]
+        MedDHProp = np.median(FinalDH[FinalDH > 0]) if np.any(FinalDH > 0) else np.nan
+        
+        # PPM calculations with safe division
+        TotDHPPM = TotalDHProp / max(TotalPres, np.finfo(float).eps)
+        DHPPM = MedDHProp / max(MedianDP, np.finfo(float).eps) if not np.isnan(MedianDP) else np.nan
+        
+        # Energy calculations (new MATLAB-derived attributes)
+        NonZeroEnergyProxy = EnergyProxy[EnergyProxy > 0]
+        NonZeroEnergyDissipated = EnergyDissipated[EnergyDissipated > 0]
+        
+        MedEnergyProxy = np.median(NonZeroEnergyProxy) if len(NonZeroEnergyProxy) > 0 else np.nan
+        MedEnergyDissipated = np.median(NonZeroEnergyDissipated) if len(NonZeroEnergyDissipated) > 0 else np.nan
+        MedRatio = MedEnergyDissipated / max(MedEnergyProxy, np.finfo(float).eps) if not np.isnan(MedEnergyProxy) else np.nan
+        
+        TotalEnergyProxy = np.nansum(EnergyProxy)
+        TotalEnergyDissipated = np.nansum(EnergyDissipated)
+        TotalEnergyRatio = TotalEnergyDissipated / max(TotalEnergyProxy, np.finfo(float).eps)
 
-        TotDHPPM = TotalDHProp / TotalPres
-        DHPPM = MedDHProp / MedianDP
-
-        file_results = [TotalPres, MedDHProp, MedianDP, DHPPM, TotDHPPM, TotalSlurryDP, MedianSlry, stage, num_windows, TotalDHProp]
-        all_results = pd.concat([all_results, pd.DataFrame([file_results], columns=['TEE', 'MedianDHPM', 'MedianDP', 'DownholePPM', 'TotalDHPPM', 'TotalSlurryDP', 'MedianSlurry', 'Stages', '# of Windows', 'TotalDHProp'])])
-        st.write(f"Appended results for stage {stage}. Current all_results rows: {len(all_results)}")
+        # Compile all results including new MATLAB-derived attributes (excluding signal_denoised)
+        file_results = [
+            TotalPres, MedDHProp, MedianDP, DHPPM, TotDHPPM, TotalSlurryDP, MedianSlry, 
+            stage, num_windows, TotalDHProp, MedEnergyProxy, MedEnergyDissipated, 
+            MedRatio, TotalEnergyProxy, TotalEnergyDissipated, TotalEnergyRatio
+        ]
+        
+        column_names = [
+            'TEE', 'MedianDHPM', 'MedianDP', 'DownholePPM', 'TotalDHPPM', 'TotalSlurryDP', 
+            'MedianSlurry', 'Stages', '# of Windows', 'TotalDHProp', 'MedEnergyProxy', 
+            'MedEnergyDissipated', 'MedRatio', 'TotalEnergyProxy', 'TotalEnergyDissipated', 
+            'TotalEnergyRatio'
+        ]
+        
+        all_results = pd.concat([all_results, pd.DataFrame([file_results], columns=column_names)])
 
         # Clean up the temporary file after processing
         try:
@@ -382,9 +586,8 @@ def process_files(files, well_details):
     # Sort the consolidated results by the "Stages" column
     if not all_results.empty:
         all_results = all_results.sort_values(by='Stages', ascending=True)
-        st.write("Sorted all_results by Stages.")
     else:
-        st.warning("No files were processed successfully, all_results is empty.")
+        st.warning("No files were processed successfully.")
 
     # Save the consolidated results in session state
     st.session_state.data_prep['consolidated_output'] = all_results
