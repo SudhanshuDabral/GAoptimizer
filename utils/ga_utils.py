@@ -3,8 +3,8 @@ from ga.check_monotonicity import check_monotonicity as check_monotonicity_func
 import numpy as np
 import re
 
-# function to calculate zscore for the data
-def zscore_data(df):
+# function to calculate zscore for the data using provided statistics
+def zscore_data(df, df_statistics=None):
     # Create a copy of the dataframe to avoid modifying the original
     zscored_df = df.copy()
     
@@ -15,8 +15,15 @@ def zscore_data(df):
     for column in zscored_df.columns:
         if column not in preserved_columns:
             zscored_df[column] = pd.to_numeric(zscored_df[column], errors='coerce')
-            col_mean = zscored_df[column].mean()
-            col_std = zscored_df[column].std(ddof=1)
+            
+            # Use provided statistics if available, otherwise calculate from data
+            if df_statistics and column in df_statistics:
+                col_mean = df_statistics[column]['mean']
+                col_std = df_statistics[column]['std']
+            else:
+                col_mean = zscored_df[column].mean()
+                col_std = zscored_df[column].std(ddof=1)
+            
             if col_std != 0:  # Avoid division by zero
                 zscored_df[column] = (zscored_df[column] - col_mean) / col_std
             else:

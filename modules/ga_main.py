@@ -57,7 +57,6 @@ def initialize_ga_state():
             'monotonicity_results': {},
             'df_statistics': None,
             'zscored_statistics': None,
-            'user_modified_statistics': None,
             'show_monotonicity': False,
             'show_sensitivity_test': False,
             'r2_threshold': 0.55,
@@ -115,207 +114,6 @@ def suppress_st_aggrid_warnings():
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=ResourceWarning, message="unclosed file")
         yield
-
-def display_and_edit_statistics():
-    """Display and allow editing of z-scored dataset statistics"""
-    if 'zscored_statistics' not in st.session_state.ga_optimizer or st.session_state.ga_optimizer['zscored_statistics'] is None:
-        st.warning("No z-scored statistics available. Please z-score your data first.")
-        return
-    
-    st.subheader("Z-Scored Dataset Statistics")
-    st.write("You can view and modify the statistical values used in model calculations. Modified values will be used for sensitivity analysis and model optimization.")
-    
-    # Initialize user_modified_statistics if not exists
-    if 'user_modified_statistics' not in st.session_state.ga_optimizer:
-        st.session_state.ga_optimizer['user_modified_statistics'] = st.session_state.ga_optimizer['zscored_statistics'].copy()
-    
-    # Create tabs for different views
-    stats_tab1, stats_tab2 = st.tabs(["View Statistics", "Edit Statistics"])
-    
-    with stats_tab1:
-        st.write("### Current Statistics (Read-Only)")
-        st.info("📊 These values update automatically when you modify them in the 'Edit Statistics' tab.")
-        
-        # Use user-modified statistics if available, otherwise use original
-        current_stats = st.session_state.ga_optimizer.get('user_modified_statistics', st.session_state.ga_optimizer['zscored_statistics'])
-        
-        # Display statistics in a formatted table
-        stats_data = []
-        for attr, stats in current_stats.items():
-            # Check if this attribute has been modified
-            original_stats = st.session_state.ga_optimizer['zscored_statistics'][attr]
-            is_modified = any(
-                abs(stats[key] - original_stats[key]) > 1e-10 
-                for key in ['mean', 'std', 'min', 'max', 'median']
-            )
-            
-            # Add indicator for modified attributes
-            attribute_name = f"{attr} {'✅ (Modified)' if is_modified else ''}"
-            
-            stats_data.append({
-                'Attribute': attribute_name,
-                'Mean': f"{stats['mean']:.6f}",
-                'Std Dev': f"{stats['std']:.6f}",
-                'Min': f"{stats['min']:.6f}",
-                'Max': f"{stats['max']:.6f}",
-                'Median': f"{stats['median']:.6f}"
-            })
-        
-        if stats_data:
-            stats_df = pd.DataFrame(stats_data)
-            st.dataframe(stats_df, use_container_width=True, hide_index=True)
-            
-            # Add download button for statistics
-            st.download_button(
-                label="Download Statistics as CSV",
-                data=stats_df.to_csv(index=False).encode('utf-8'),
-                file_name="zscored_statistics.csv",
-                mime="text/csv",
-            )
-        else:
-            st.info("No statistics available to display.")
-    
-    with stats_tab2:
-        st.write("### Edit Statistics")
-        st.info("⚠️ **Important**: Modifying these values will affect all subsequent model calculations, sensitivity analysis, and optimization results. Only modify if you understand the impact on your analysis.")
-        
-        # Reset button
-        col1, col2 = st.columns([1, 4])
-        with col1:
-            if st.button("Reset to Original", help="Reset all statistics to their original calculated values"):
-                st.session_state.ga_optimizer['user_modified_statistics'] = st.session_state.ga_optimizer['zscored_statistics'].copy()
-                st.success("Statistics reset to original values.")
-                st.rerun()
-        
-        with col2:
-            if st.button("Apply Changes", help="Apply all modifications and update calculations"):
-                st.success("Changes applied successfully. These values will be used in all subsequent calculations.")
-                st.rerun()
-        
-        # Create editable interface for each attribute
-        modified_stats = {}
-        
-        for attr, stats in st.session_state.ga_optimizer['user_modified_statistics'].items():
-            with st.expander(f"📊 {attr.replace('_', ' ').title()}", expanded=False):
-                st.write(f"**Original Values:** Mean: {st.session_state.ga_optimizer['zscored_statistics'][attr]['mean']:.6f}, "
-                        f"Std: {st.session_state.ga_optimizer['zscored_statistics'][attr]['std']:.6f}")
-                
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    mean_val = st.number_input(
-                        "Mean", 
-                        value=float(stats['mean']), 
-                        format="%.6f",
-                        key=f"mean_{attr}",
-                        help="Mean value used in calculations"
-                    )
-                    
-                    min_val = st.number_input(
-                        "Min", 
-                        value=float(stats['min']), 
-                        format="%.6f",
-                        key=f"min_{attr}",
-                        help="Minimum value in the dataset"
-                    )
-                
-                with col2:
-                    std_val = st.number_input(
-                        "Std Dev", 
-                        value=float(stats['std']), 
-                        format="%.6f",
-                        key=f"std_{attr}",
-                        help="Standard deviation used in calculations"
-                    )
-                    
-                    max_val = st.number_input(
-                        "Max", 
-                        value=float(stats['max']), 
-                        format="%.6f",
-                        key=f"max_{attr}",
-                        help="Maximum value in the dataset"
-                    )
-                
-                with col3:
-                    median_val = st.number_input(
-                        "Median", 
-                        value=float(stats['median']), 
-                        format="%.6f",
-                        key=f"median_{attr}",
-                        help="Median value used in sensitivity analysis"
-                    )
-                    
-                    # Show if values have been modified
-                    original_stats = st.session_state.ga_optimizer['zscored_statistics'][attr]
-                    is_modified = (
-                        abs(mean_val - original_stats['mean']) > 1e-10 or
-                        abs(std_val - original_stats['std']) > 1e-10 or
-                        abs(min_val - original_stats['min']) > 1e-10 or
-                        abs(max_val - original_stats['max']) > 1e-10 or
-                        abs(median_val - original_stats['median']) > 1e-10
-                    )
-                    
-                    if is_modified:
-                        st.success("✅ Modified")
-                    else:
-                        st.info("📊 Original")
-                
-                # Store the modified values
-                modified_stats[attr] = {
-                    'mean': mean_val,
-                    'std': std_val,
-                    'min': min_val,
-                    'max': max_val,
-                    'median': median_val
-                }
-        
-        # Update the session state with modified values in real-time
-        st.session_state.ga_optimizer['user_modified_statistics'] = modified_stats
-        
-        # Force update of the view statistics tab by checking if any values changed
-        if 'last_modified_stats' not in st.session_state.ga_optimizer:
-            st.session_state.ga_optimizer['last_modified_stats'] = {}
-        
-        # Check if any values have changed from the last update
-        stats_changed = False
-        for attr, stats in modified_stats.items():
-            if attr not in st.session_state.ga_optimizer['last_modified_stats']:
-                stats_changed = True
-                break
-            for key in ['mean', 'std', 'min', 'max', 'median']:
-                if abs(stats[key] - st.session_state.ga_optimizer['last_modified_stats'][attr].get(key, 0)) > 1e-10:
-                    stats_changed = True
-                    break
-            if stats_changed:
-                break
-        
-        # Update the last modified stats
-        st.session_state.ga_optimizer['last_modified_stats'] = modified_stats.copy()
-        
-        # Show summary of modifications
-        st.write("### Modification Summary")
-        modified_attrs = []
-        for attr in st.session_state.ga_optimizer['user_modified_statistics']:
-            original_stats = st.session_state.ga_optimizer['zscored_statistics'][attr]
-            current_stats = st.session_state.ga_optimizer['user_modified_statistics'][attr]
-            
-            is_modified = any(
-                abs(current_stats[key] - original_stats[key]) > 1e-10 
-                for key in ['mean', 'std', 'min', 'max', 'median']
-            )
-            
-            if is_modified:
-                modified_attrs.append(attr)
-        
-        if modified_attrs:
-            st.warning(f"**Modified attributes:** {', '.join(modified_attrs)}")
-            st.write("These modified values will be used in:")
-            st.write("- Model sensitivity analysis")
-            st.write("- Baseline productivity calculations")
-            st.write("- Attribute-specific sensitivity tests")
-            st.write("- Model optimization processes")
-        else:
-            st.success("All statistics are using original calculated values.")
 
 def ga_optimization_section():
     with warnings.catch_warnings(record=True) as caught_warnings:
@@ -477,75 +275,164 @@ def ga_optimization_section():
                         mime="text/csv",
                     )
 
+                    # Add expandable section for editing statistics
+                    with st.expander("Edit Dataset Statistics", expanded=False):
+                        st.write("**Modify the statistical parameters used for Z-scoring and model calculations:**")
+                        st.info("Changes to these statistics will affect Z-scoring, monotonicity checks, and model calculations.")
+                        
+                        # Editable statistics table
+                        if st.session_state.ga_optimizer['df_statistics']:
+                            st.subheader("Edit Dataset Statistics")
+                            
+                            # Create editable dataframe for statistics
+                            stats_data = []
+                            for attr, stats in st.session_state.ga_optimizer['df_statistics'].items():
+                                stats_data.append({
+                                    'Attribute': attr,
+                                    'Mean': stats['mean'],
+                                    'Std': stats['std'],
+                                    'Min': stats['min'],
+                                    'Max': stats['max'],
+                                    'Median': stats['median']
+                                })
+                            
+                            stats_df = pd.DataFrame(stats_data)
+                            
+                            # Create editable AgGrid
+                            gb = GridOptionsBuilder.from_dataframe(stats_df)
+                            gb.configure_column("Attribute", editable=False, pinned="left", width=180, minWidth=150)
+                            gb.configure_column("Mean", editable=True, type=["numericColumn"], precision=6, width=150, minWidth=120)
+                            gb.configure_column("Std", editable=True, type=["numericColumn"], precision=6, width=150, minWidth=120)
+                            gb.configure_column("Min", editable=True, type=["numericColumn"], precision=6, width=150, minWidth=120)
+                            gb.configure_column("Max", editable=True, type=["numericColumn"], precision=6, width=150, minWidth=120)
+                            gb.configure_column("Median", editable=True, type=["numericColumn"], precision=6, width=150, minWidth=120)
+                            gb.configure_grid_options(domLayout='normal', 
+                                                  suppressMovableColumns=False, 
+                                                  enableRangeSelection=True,
+                                                  columnSizeDefault=150,
+                                                  autoSizeColumns=False,
+                                                  enableColResize=True,
+                                                  resizable=True)
+                            grid_options = gb.build()
+                            
+                            # Display editable grid
+                            with suppress_st_aggrid_warnings():
+                                grid_response = AgGrid(stats_df, 
+                                                   gridOptions=grid_options, 
+                                                   update_mode=GridUpdateMode.VALUE_CHANGED,
+                                                   fit_columns_on_grid_load=True,
+                                                   height=450, 
+                                                   width='100%',
+                                                   allow_unsafe_jscode=True)
+                            
+                            edited_stats_df = pd.DataFrame(grid_response['data'])
+                            
+                            # Add action buttons
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                if st.button("Update Statistics", key="update_stats"):
+                                    # Validate that Std values are not zero or negative
+                                    invalid_std = edited_stats_df[edited_stats_df['Std'] <= 0]
+                                    if not invalid_std.empty:
+                                        st.error(f"Standard deviation must be greater than 0 for: {', '.join(invalid_std['Attribute'].tolist())}")
+                                    else:
+                                        # Update the df_statistics with edited values
+                                        for _, row in edited_stats_df.iterrows():
+                                            attr = row['Attribute']
+                                            if attr in st.session_state.ga_optimizer['df_statistics']:
+                                                st.session_state.ga_optimizer['df_statistics'][attr]['mean'] = float(row['Mean'])
+                                                st.session_state.ga_optimizer['df_statistics'][attr]['std'] = float(row['Std'])
+                                                st.session_state.ga_optimizer['df_statistics'][attr]['min'] = float(row['Min'])
+                                                st.session_state.ga_optimizer['df_statistics'][attr]['max'] = float(row['Max'])
+                                                st.session_state.ga_optimizer['df_statistics'][attr]['median'] = float(row['Median'])
+                                        
+                                        st.success("Statistics updated successfully!")
+                                        st.rerun()
+                            
+                            with col2:
+                                if st.button("Reset to Original", key="reset_stats"):
+                                    st.session_state.ga_optimizer['df_statistics'] = calculate_df_statistics(edited_df)
+                                    st.success("Statistics reset to original calculated values.")
+                                    st.rerun()
+                            
+                            with col3:
+                                if st.button("Recalculate Z-Score", key="recalc_zscore"):
+                                    if 'edited_df' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['edited_df'] is not None:
+                                        if st.session_state.ga_optimizer['edited_df']['Productivity'].isnull().any() or (st.session_state.ga_optimizer['edited_df']['Productivity'] == "").any():
+                                            st.error("Please ensure all values in the 'Productivity' column are filled before recalculating Z-score.")
+                                        else:
+                                            # Recalculate z-scored data with updated statistics
+                                            zscored_df = zscore_data(st.session_state.ga_optimizer['edited_df'], st.session_state.ga_optimizer['df_statistics'])
+                                            st.session_state.ga_optimizer['zscored_df'] = zscored_df
+                                            st.session_state.ga_optimizer['zscored_statistics'] = calculate_zscoredf_statistics(zscored_df)
+                                            st.session_state.ga_optimizer['show_zscore'] = True
+                                            st.success("Z-scored data recalculated with updated statistics.")
+                                            st.rerun()
+                                    else:
+                                        st.error("No data available to recalculate Z-score.")
+                        else:
+                            st.warning("No statistics available. Please load data first.")
+
                     if st.button("Z-Score Data"):
                         if edited_df['Productivity'].isnull().any() or (edited_df['Productivity'] == "").any():
                             st.error("Please ensure all values in the 'Productivity' column are filled.")
                         else:
-                            zscored_df = zscore_data(edited_df)
+                            zscored_df = zscore_data(edited_df, st.session_state.ga_optimizer['df_statistics'])
                             st.session_state.ga_optimizer['zscored_df'] = zscored_df
                             st.session_state.ga_optimizer['zscored_statistics'] = calculate_zscoredf_statistics(st.session_state.ga_optimizer['zscored_df'])
-                            # Initialize user_modified_statistics if not exists
-                            if 'user_modified_statistics' not in st.session_state.ga_optimizer:
-                                st.session_state.ga_optimizer['user_modified_statistics'] = st.session_state.ga_optimizer['zscored_statistics'].copy()
                             st.session_state.ga_optimizer['show_zscore'] = True
                             st.success("Data has been Z-Scored.")
                             st.rerun()
 
                 if st.session_state.ga_optimizer['show_zscore']:
                     with tab2:
-                        # Create sub-tabs for Z-scored data and statistics
-                        zscore_tab1, zscore_tab2 = st.tabs(["Z-Scored Data Selection", "Dataset Statistics"])
+                        st.write("Z-Scored Data Preview:")
+                        gb = GridOptionsBuilder.from_dataframe(st.session_state.ga_optimizer['zscored_df'])
+                        gb.configure_selection('multiple', use_checkbox=True)
+                        gb.configure_column("Well Name", hide=False)
+                        if 'data_id' in st.session_state.ga_optimizer['zscored_df'].columns:
+                            gb.configure_column("data_id", hide=True)
+                        if 'well_id' in st.session_state.ga_optimizer['zscored_df'].columns:
+                            gb.configure_column("well_id", hide=True)
+                        gb.configure_column("tee", checkboxSelection=True, headerCheckboxSelection=True)
+                        gb.configure_grid_options(suppressRowClickSelection=True,
+                                              columnSizeDefault=150,
+                                              autoSizeColumns=True)
+                        grid_options = gb.build()
                         
-                        with zscore_tab1:
-                            st.write("Z-Scored Data Preview:")
-                            gb = GridOptionsBuilder.from_dataframe(st.session_state.ga_optimizer['zscored_df'])
-                            gb.configure_selection('multiple', use_checkbox=True)
-                            gb.configure_column("Well Name", hide=False)
-                            if 'data_id' in st.session_state.ga_optimizer['zscored_df'].columns:
-                                gb.configure_column("data_id", hide=True)
-                            if 'well_id' in st.session_state.ga_optimizer['zscored_df'].columns:
-                                gb.configure_column("well_id", hide=True)
-                            gb.configure_column("tee", checkboxSelection=True, headerCheckboxSelection=True)
-                            gb.configure_grid_options(suppressRowClickSelection=True,
-                                                  columnSizeDefault=150,
-                                                  autoSizeColumns=True)
-                            grid_options = gb.build()
-                            
-                            grid_response = AgGrid(st.session_state.ga_optimizer['zscored_df'], 
-                                               gridOptions=grid_options,
-                                               update_mode=GridUpdateMode.SELECTION_CHANGED, 
-                                               fit_columns_on_grid_load=True,
-                                               height=400, 
-                                               allow_unsafe_jscode=True)
-                            
-                            selected_rows = pd.DataFrame(grid_response['selected_rows'])
-                            
-                            if not selected_rows.empty:
-                                if 'data_id' in selected_rows.columns:
-                                    # Use data_id if available
-                                    st.session_state.ga_optimizer['excluded_rows'] = selected_rows['data_id'].tolist()
-                                else:
-                                    # Use Well Name and stage as unique identifier
-                                    st.session_state.ga_optimizer['excluded_rows'] = selected_rows[['Well Name', 'stage']].to_dict('records')
+                        grid_response = AgGrid(st.session_state.ga_optimizer['zscored_df'], 
+                                           gridOptions=grid_options,
+                                           update_mode=GridUpdateMode.SELECTION_CHANGED, 
+                                           fit_columns_on_grid_load=True,
+                                           height=400, 
+                                           allow_unsafe_jscode=True)
+                        
+                        selected_rows = pd.DataFrame(grid_response['selected_rows'])
+                        
+                        if not selected_rows.empty:
+                            if 'data_id' in selected_rows.columns:
+                                # Use data_id if available
+                                st.session_state.ga_optimizer['excluded_rows'] = selected_rows['data_id'].tolist()
                             else:
-                                st.session_state.ga_optimizer['excluded_rows'] = []
+                                # Use Well Name and stage as unique identifier
+                                st.session_state.ga_optimizer['excluded_rows'] = selected_rows[['Well Name', 'stage']].to_dict('records')
+                        else:
+                            st.session_state.ga_optimizer['excluded_rows'] = []
 
-                            st.download_button(
-                                label="Download Z-Scored Data",
-                                data=st.session_state.ga_optimizer['zscored_df'].to_csv(index=False).encode('utf-8'),
-                                file_name="zscored_data.csv",
-                                mime="text/csv",
-                            )
-                            
-                            st.write("Selected rows to exclude from GA optimization:")
-                            display_columns = [col for col in selected_rows.columns if col not in ['data_id', 'well_id']]
-                            st.dataframe(selected_rows[display_columns], use_container_width=True, hide_index=True)
-                            
-                            # Display the number of selected rows
-                            st.write(f"Number of datapoints selected for exclusion: {len(st.session_state.ga_optimizer['excluded_rows'])}")
+                        st.download_button(
+                            label="Download Z-Scored Data",
+                            data=st.session_state.ga_optimizer['zscored_df'].to_csv(index=False).encode('utf-8'),
+                            file_name="zscored_data.csv",
+                            mime="text/csv",
+                        )
                         
-                        with zscore_tab2:
-                            display_and_edit_statistics()
+                        st.write("Selected rows to exclude from GA optimization:")
+                        display_columns = [col for col in selected_rows.columns if col not in ['data_id', 'well_id']]
+                        st.dataframe(selected_rows[display_columns], use_container_width=True, hide_index=True)
+                        
+                        # Display the number of selected rows
+                        st.write(f"Number of datapoints selected for exclusion: {len(st.session_state.ga_optimizer['excluded_rows'])}")
 
                 with st.expander("Feature Selection"):
                     drop_columns = st.multiselect("Select Columns to Drop",
@@ -970,9 +857,7 @@ def display_ga_results():
                     st.write("Model Sensitivity Analysis")
                     try:
                         import numpy as np  # Ensure numpy is available in this scope
-                        # Use user-modified statistics if available, otherwise use original
-                        stats_to_use = st.session_state.ga_optimizer.get('user_modified_statistics', st.session_state.ga_optimizer['zscored_statistics'])
-                        baseline_productivity, sensitivity_df = calculate_model_sensitivity(response_equation, stats_to_use)
+                        baseline_productivity, sensitivity_df = calculate_model_sensitivity(response_equation, st.session_state.ga_optimizer['zscored_statistics'])
                         
                         if baseline_productivity is not None and not np.isclose(baseline_productivity, 0, atol=1e-10):
                             st.write(f"Baseline Productivity (using median values): {baseline_productivity:.4f}")
@@ -1008,7 +893,7 @@ def display_ga_results():
 
                             st.write("Elasticity Analysis")
                             st.write("This chart shows how sensitive the productivity is to changes in each feature.")
-                            fig_elasticity = create_elasticity_analysis(sensitivity_df, stats_to_use, baseline_productivity)
+                            fig_elasticity = create_elasticity_analysis(sensitivity_df, st.session_state.ga_optimizer['zscored_statistics'], baseline_productivity)
                             st.plotly_chart(fig_elasticity, use_container_width=True)
 
                         if save_model:
@@ -1037,8 +922,6 @@ def display_ga_results():
                             predictors = st.session_state.ga_optimizer.get('predictors', [])
 
                             # Call the database function to save the model
-                            # Use user-modified statistics if available, otherwise use original
-                            stats_to_save = st.session_state.ga_optimizer.get('user_modified_statistics', st.session_state.ga_optimizer['zscored_statistics'])
                             result = insert_ga_model(
                                 model_name,
                                 st.session_state.user_id,
@@ -1047,7 +930,7 @@ def display_ga_results():
                                 zscored_df,
                                 excluded_rows,
                                 sensitivity_df,
-                                stats_to_save,
+                                st.session_state.ga_optimizer['zscored_statistics'],
                                 baseline_productivity,
                                 predictors
                                 )
@@ -1439,17 +1322,15 @@ def sensitivity_test_section():
         if st.button("Run General Sensitivity Analysis", key="run_general_sensitivity"):
             with st.spinner("Running General Sensitivity Analysis..."):
                 try:
-                    # Use user-modified statistics if available, otherwise use original
-                    stats_to_use = st.session_state.ga_optimizer.get('user_modified_statistics', st.session_state.ga_optimizer['zscored_statistics'])
                     baseline_productivity, sensitivity_df = calculate_model_sensitivity(
                         equation_to_use, 
-                        stats_to_use
+                        st.session_state.ga_optimizer['zscored_statistics']
                     )
                     
                     if baseline_productivity is not None and not np.isclose(baseline_productivity, 0, atol=1e-10):
                         fig_tornado = create_tornado_chart(sensitivity_df, baseline_productivity)
                         fig_importance = create_feature_importance_chart(sensitivity_df)
-                        fig_elasticity = create_elasticity_analysis(sensitivity_df, stats_to_use, baseline_productivity)
+                        fig_elasticity = create_elasticity_analysis(sensitivity_df, st.session_state.ga_optimizer['zscored_statistics'], baseline_productivity)
                         
                         st.session_state.sensitivity_results['general'] = {
                             'baseline_productivity': baseline_productivity,
@@ -1497,13 +1378,11 @@ def sensitivity_test_section():
                     try:
                         attribute_results = {}
                         for attr in selected_attributes:
-                            # Use user-modified statistics if available, otherwise use original
-                            stats_to_use = st.session_state.ga_optimizer.get('user_modified_statistics', st.session_state.ga_optimizer['zscored_statistics'])
                             sensitivity_results = perform_sensitivity_test(
                                 equation_to_use,
                                 attr, 
                                 num_points, 
-                                stats_to_use
+                                st.session_state.ga_optimizer['zscored_statistics']
                             )
                             fig_sensitivity = plot_sensitivity_results(sensitivity_results, attr)
                             
