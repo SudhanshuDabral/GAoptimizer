@@ -304,9 +304,19 @@ def process_files(files, well_details):
             # Ensure timestamp_utc is in datetime format and calculate seconds from the first timestamp
             data['timestamp_utc'] = pd.to_datetime(data['timestamp_utc'])
             data['time'] = (data['timestamp_utc'] - data['timestamp_utc'].min()).dt.total_seconds()
+            # Create epoch (Unix timestamp in seconds)
+            data['epoch'] = data['timestamp_utc'].astype('int64') // 10**9
             T = data['time'].values
         elif 'time' in data.columns:
             T = data['time'].values
+            # If no epoch column exists, create synthetic timestamps
+            if 'epoch' not in data.columns:
+                # Create a base timestamp (e.g., start of 2024)
+                base_timestamp = pd.Timestamp('2024-01-01')
+                # Convert time in seconds to timedelta and add to base timestamp
+                data['timestamp_utc'] = base_timestamp + pd.to_timedelta(data['time'], unit='s')
+                # Create epoch (Unix timestamp in seconds)
+                data['epoch'] = data['timestamp_utc'].astype('int64') // 10**9
         else:
             st.error(f"Required column 'time' or 'timestamp_utc' not found in file: {file.name}")
             os.remove(temp_file_path)
@@ -349,7 +359,7 @@ def process_files(files, well_details):
             'slurry_rate': data['slurry_rate'],
             'bottomhole_prop_mass': DownHoleProp,
             'time_seconds': T.astype(int),
-            'epoch': data['epoch'] if 'epoch' in data.columns else None
+            'epoch': data['epoch']
         })
 
         insert_result = bulk_insert_well_completion_records(st.session_state.data_prep['well_id'], stage, completion_data, user_id)
