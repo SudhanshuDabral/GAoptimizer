@@ -8,7 +8,7 @@ import logging
 import os
 import numpy as np
 import pandas as pd
-from itertools import cycle
+import colorsys
 
 
 # Set up logging
@@ -139,72 +139,192 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 
 def plot_actual_vs_predicted(error_df):
-    fig = go.Figure()
+    try:
+        log_message(logging.DEBUG, f"Starting plot_actual_vs_predicted with DataFrame shape: {error_df.shape}")
+        log_message(logging.DEBUG, f"DataFrame columns: {list(error_df.columns)}")
+        
+        fig = go.Figure()
 
-    # Get unique well names and assign colors
-    unique_wells = error_df['WellName'].unique()
-    colors = px.colors.qualitative.Plotly[:len(unique_wells)]
-    color_map = dict(zip(unique_wells, colors))
+        # Validate required columns exist
+        required_columns = ['WellName', 'Predicted', 'Actual', 'stage']
+        missing_columns = [col for col in required_columns if col not in error_df.columns]
+        if missing_columns:
+            log_message(logging.ERROR, f"Missing required columns: {missing_columns}")
+            raise ValueError(f"Missing required columns: {missing_columns}")
 
-    # Plot data points for each well
-    for well in unique_wells:
-        well_data = error_df[error_df['WellName'] == well]
-        fig.add_trace(go.Scatter(
-            x=well_data['Predicted'],
-            y=well_data['Actual'],
-            mode='markers',
-            name=well,
-            text=[f"{well}_Stage{stage}" for stage in well_data['stage']],  # Add well name and stage to hover text
-            hoverinfo='text+x+y',
-            marker=dict(color=color_map[well], size=8)
-        ))
+        # Clean and validate data
+        log_message(logging.DEBUG, f"Original DataFrame shape: {error_df.shape}")
+        
+        # Remove rows with NaN well names
+        original_count = len(error_df)
+        error_df = error_df.dropna(subset=['WellName'])
+        if len(error_df) < original_count:
+            log_message(logging.WARNING, f"Removed {original_count - len(error_df)} rows with NaN WellName values")
+        
+        # Convert WellName to string to handle any data type issues
+        error_df['WellName'] = error_df['WellName'].astype(str)
+        
+        # Remove any rows where WellName is 'nan' string
+        error_df = error_df[error_df['WellName'] != 'nan']
+        log_message(logging.DEBUG, f"Cleaned DataFrame shape: {error_df.shape}")
+        
+        if len(error_df) == 0:
+            log_message(logging.ERROR, "No valid data remaining after cleaning")
+            raise ValueError("No valid data remaining after cleaning")
 
-    # Calculate regression line
-    X = error_df['Predicted'].values.reshape(-1, 1)
-    y = error_df['Actual'].values
-    reg = LinearRegression().fit(X, y)
-    y_pred = reg.predict(X)
+        # Get unique well names and assign colors
+        unique_wells = error_df['WellName'].unique()
+        log_message(logging.DEBUG, f"Unique wells found: {list(unique_wells)}")
+        log_message(logging.DEBUG, f"Number of unique wells: {len(unique_wells)}")
+        
+        # Log all well names in the DataFrame for debugging
+        all_well_names = error_df['WellName'].tolist()
+        unique_all_wells = list(set(all_well_names))
+        log_message(logging.DEBUG, f"All unique well names in DataFrame: {unique_all_wells}")
+        
+        # Check if there are any discrepancies
+        if set(unique_wells) != set(unique_all_wells):
+            log_message(logging.WARNING, f"Discrepancy found between unique() and set() results")
+            log_message(logging.WARNING, f"unique(): {set(unique_wells)}")
+            log_message(logging.WARNING, f"set(): {set(unique_all_wells)}")
+            # Use the set version to be safe
+            unique_wells = unique_all_wells
+        
+        # Handle case where there are more wells than available colors
+        available_colors = px.colors.qualitative.Plotly
+        if len(unique_wells) > len(available_colors):
+            # Cycle through colors if we have more wells than colors
+            colors = [available_colors[i % len(available_colors)] for i in range(len(unique_wells))]
+        else:
+            colors = available_colors[:len(unique_wells)]
+        
+        color_map = dict(zip(unique_wells, colors))
+        log_message(logging.DEBUG, f"Color map created: {color_map}")
 
-    # Calculate R² value
-    r2 = r2_score(y, y_pred)
+        # Plot data points for each well
+        for well in unique_wells:
+            try:
+                log_message(logging.DEBUG, f"Processing well: {well}")
+                well_data = error_df[error_df['WellName'] == well]
+                log_message(logging.DEBUG, f"Well {well} has {len(well_data)} data points")
+                
+                if len(well_data) == 0:
+                    log_message(logging.WARNING, f"No data found for well: {well}")
+                    continue
+                
+                # Ensure the well exists in color_map
+                if well not in color_map:
+                    log_message(logging.ERROR, f"Well '{well}' not found in color_map. Available wells: {list(color_map.keys())}")
+                    # Assign a default color
+                    color_map[well] = 'gray'
+                
+                fig.add_trace(go.Scatter(
+                    x=well_data['Predicted'],
+                    y=well_data['Actual'],
+                    mode='markers',
+                    name=well,
+                    text=[f"{well}_Stage{stage}" for stage in well_data['stage']],  # Add well name and stage to hover text
+                    hoverinfo='text+x+y',
+                    marker=dict(color=color_map[well], size=8)
+                ))
+                log_message(logging.DEBUG, f"Successfully added trace for well: {well}")
+            except Exception as well_error:
+                log_message(logging.ERROR, f"Error processing well '{well}': {str(well_error)}")
+                # Continue with other wells instead of failing completely
+                continue
 
-    # Add regression line
-    fig.add_trace(go.Scatter(
-        x=error_df['Predicted'],
-        y=y_pred,
-        mode='lines',
-        name=f'Regression Line (R² = {r2:.4f})',
-        line=dict(color='red', dash='dash')
-    ))
+        # Calculate regression line
+        try:
+            log_message(logging.DEBUG, "Calculating regression line")
+            X = error_df['Predicted'].values.reshape(-1, 1)
+            y = error_df['Actual'].values
+            
+            if len(X) == 0 or len(y) == 0:
+                log_message(logging.ERROR, "No data available for regression calculation")
+                raise ValueError("No data available for regression calculation")
+            
+            reg = LinearRegression().fit(X, y)
+            y_pred = reg.predict(X)
 
-    # Add perfect prediction line
-    max_value = max(error_df['Predicted'].max(), error_df['Actual'].max())
-    min_value = min(error_df['Predicted'].min(), error_df['Actual'].min())
-    # fig.add_trace(go.Scatter(
-    #     x=[min_value, max_value],
-    #     y=[min_value, max_value],
-    #     mode='lines',
-    #     name='Perfect Prediction',
-    #     line=dict(color='white', dash='dot')
-    # ))
+            # Calculate R² value
+            r2 = r2_score(y, y_pred)
+            log_message(logging.DEBUG, f"Regression R² calculated: {r2:.4f}")
 
-    fig.update_layout(
-        title='Model Performance Plot',
-        xaxis_title='Predicted Productivity',
-        yaxis_title='Actual Productivity',
-        legend_title='Wells',
-        height=600,
-        width=800
-    )
+            # Add regression line
+            fig.add_trace(go.Scatter(
+                x=error_df['Predicted'],
+                y=y_pred,
+                mode='lines',
+                name=f'Regression Line (R² = {r2:.4f})',
+                line=dict(color='red', dash='dash')
+            ))
+            log_message(logging.DEBUG, "Regression line added to plot")
+        except Exception as regression_error:
+            log_message(logging.ERROR, f"Error calculating regression line: {str(regression_error)}")
+            # Continue without regression line
+            pass
 
-    # Make the plot square and set axis ranges to be equal
-    fig.update_layout(
-        yaxis=dict(scaleanchor="x", scaleratio=1),
-        xaxis=dict(range=[min_value, max_value]),
-        yaxis_range=[min_value, max_value]
-    )
+        # Calculate plot ranges
+        try:
+            log_message(logging.DEBUG, "Calculating plot ranges")
+            max_value = max(error_df['Predicted'].max(), error_df['Actual'].max())
+            min_value = min(error_df['Predicted'].min(), error_df['Actual'].min())
+            log_message(logging.DEBUG, f"Plot range: {min_value:.4f} to {max_value:.4f}")
+        except Exception as range_error:
+            log_message(logging.ERROR, f"Error calculating plot ranges: {str(range_error)}")
+            # Use default ranges
+            max_value = 1.0
+            min_value = 0.0
 
-    return fig
+        # Update layout
+        try:
+            log_message(logging.DEBUG, "Updating plot layout")
+            fig.update_layout(
+                title='Model Performance Plot',
+                xaxis_title='Predicted Productivity',
+                yaxis_title='Actual Productivity',
+                legend_title='Wells',
+                height=600,
+                width=800
+            )
+
+            # Make the plot square and set axis ranges to be equal
+            fig.update_layout(
+                yaxis=dict(scaleanchor="x", scaleratio=1),
+                xaxis=dict(range=[min_value, max_value]),
+                yaxis_range=[min_value, max_value]
+            )
+            log_message(logging.DEBUG, "Plot layout updated successfully")
+        except Exception as layout_error:
+            log_message(logging.ERROR, f"Error updating plot layout: {str(layout_error)}")
+            # Use basic layout
+            fig.update_layout(title='Model Performance Plot')
+
+        log_message(logging.DEBUG, "plot_actual_vs_predicted completed successfully")
+        return fig
+        
+    except Exception as e:
+        log_message(logging.ERROR, f"Critical error in plot_actual_vs_predicted: {str(e)}")
+        import traceback
+        log_message(logging.ERROR, f"Full traceback: {traceback.format_exc()}")
+        
+        # Return a simple error plot
+        fig = go.Figure()
+        fig.add_annotation(
+            x=0.5, y=0.5,
+            text=f"Error creating plot: {str(e)}",
+            showarrow=False,
+            xref="paper", yref="paper",
+            font=dict(size=16, color="red")
+        )
+        fig.update_layout(
+            title="Plot Error",
+            xaxis_title="Error",
+            yaxis_title="Error",
+            height=400,
+            width=600
+        )
+        return fig
 
 #function to create a tornado chart for model sensitivity
 def create_tornado_chart(sensitivity_df, baseline_productivity):
@@ -449,8 +569,6 @@ def create_multi_axis_plot(df, title, event_windows, leakoff_periods):
     except Exception as e:
         log_message(logging.ERROR, f"Error creating multi-axis plot: {str(e)}")
         raise
-
-import colorsys
 
 def generate_distinct_colors(n):
     HSV_tuples = [(x * 1.0 / n, 0.8, 0.9) for x in range(n)]

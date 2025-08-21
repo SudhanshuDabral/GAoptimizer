@@ -280,89 +280,108 @@ def ga_optimization_section():
                         st.write("**Modify the statistical parameters used for Z-scoring and model calculations:**")
                         st.info("Changes to these statistics will affect Z-scoring, monotonicity checks, and model calculations.")
                         
-                        # Editable statistics table
+                        # Simple form to edit statistics
                         if st.session_state.ga_optimizer['df_statistics']:
                             st.subheader("Edit Dataset Statistics")
                             
-                            # Create editable dataframe for statistics
-                            stats_data = []
-                            for attr, stats in st.session_state.ga_optimizer['df_statistics'].items():
-                                stats_data.append({
-                                    'Attribute': attr,
-                                    'Mean': stats['mean'],
-                                    'Std': stats['std'],
-                                    'Min': stats['min'],
-                                    'Max': stats['max'],
-                                    'Median': stats['median']
-                                })
+                            # Create form for editing statistics
+                            with st.form("edit_statistics_form"):
+                                st.write("**Modify the statistical parameters directly:**")
+                                
+                                # Create columns for better layout
+                                col1, col2, col3, col4, col5 = st.columns(5)
+                                
+                                with col1:
+                                    st.write("**Mean**")
+                                with col2:
+                                    st.write("**Std**")
+                                with col3:
+                                    st.write("**Min**")
+                                with col4:
+                                    st.write("**Max**")
+                                with col5:
+                                    st.write("**Median**")
+                                
+                                # Create input fields for each attribute
+                                for attr in st.session_state.ga_optimizer['df_statistics']:
+                                    st.write(f"**{attr}**")
+                                    col1, col2, col3, col4, col5 = st.columns(5)
+                                    
+                                    with col1:
+                                        new_mean = st.number_input(
+                                            f"Mean", 
+                                            value=float(st.session_state.ga_optimizer['df_statistics'][attr]['mean']), 
+                                            format="%.6f",
+                                            key=f"form_mean_{attr}",
+                                            label_visibility="collapsed"
+                                        )
+                                    
+                                    with col2:
+                                        new_std = st.number_input(
+                                            f"Std", 
+                                            value=float(st.session_state.ga_optimizer['df_statistics'][attr]['std']), 
+                                            min_value=0.000001,  # Prevent zero std
+                                            format="%.6f",
+                                            key=f"form_std_{attr}",
+                                            label_visibility="collapsed"
+                                        )
+                                    
+                                    with col3:
+                                        new_min = st.number_input(
+                                            f"Min", 
+                                            value=float(st.session_state.ga_optimizer['df_statistics'][attr]['min']), 
+                                            format="%.6f",
+                                            key=f"form_min_{attr}",
+                                            label_visibility="collapsed"
+                                        )
+                                    
+                                    with col4:
+                                        new_max = st.number_input(
+                                            f"Max", 
+                                            value=float(st.session_state.ga_optimizer['df_statistics'][attr]['max']), 
+                                            format="%.6f",
+                                            key=f"form_max_{attr}",
+                                            label_visibility="collapsed"
+                                        )
+                                    
+                                    with col5:
+                                        new_median = st.number_input(
+                                            f"Median", 
+                                            value=float(st.session_state.ga_optimizer['df_statistics'][attr]['median']), 
+                                            format="%.6f",
+                                            key=f"form_median_{attr}",
+                                            label_visibility="collapsed"
+                                        )
+                                    
+                                    # Directly update the df_statistics in session state
+                                    st.session_state.ga_optimizer['df_statistics'][attr]['mean'] = new_mean
+                                    st.session_state.ga_optimizer['df_statistics'][attr]['std'] = new_std
+                                    st.session_state.ga_optimizer['df_statistics'][attr]['min'] = new_min
+                                    st.session_state.ga_optimizer['df_statistics'][attr]['max'] = new_max
+                                    st.session_state.ga_optimizer['df_statistics'][attr]['median'] = new_median
+                                
+                                # Form submit button
+                                submitted = st.form_submit_button("Update Statistics")
+                                if submitted:
+                                    st.success("Statistics updated successfully!")
+                                    st.rerun()
                             
-                            stats_df = pd.DataFrame(stats_data)
-                            
-                            # Create editable AgGrid
-                            gb = GridOptionsBuilder.from_dataframe(stats_df)
-                            gb.configure_column("Attribute", editable=False, pinned="left", width=180, minWidth=150)
-                            gb.configure_column("Mean", editable=True, type=["numericColumn"], precision=6, width=150, minWidth=120)
-                            gb.configure_column("Std", editable=True, type=["numericColumn"], precision=6, width=150, minWidth=120)
-                            gb.configure_column("Min", editable=True, type=["numericColumn"], precision=6, width=150, minWidth=120)
-                            gb.configure_column("Max", editable=True, type=["numericColumn"], precision=6, width=150, minWidth=120)
-                            gb.configure_column("Median", editable=True, type=["numericColumn"], precision=6, width=150, minWidth=120)
-                            gb.configure_grid_options(domLayout='normal', 
-                                                  suppressMovableColumns=False, 
-                                                  enableRangeSelection=True,
-                                                  columnSizeDefault=150,
-                                                  autoSizeColumns=False,
-                                                  enableColResize=True,
-                                                  resizable=True)
-                            grid_options = gb.build()
-                            
-                            # Display editable grid
-                            with suppress_st_aggrid_warnings():
-                                grid_response = AgGrid(stats_df, 
-                                                   gridOptions=grid_options, 
-                                                   update_mode=GridUpdateMode.VALUE_CHANGED,
-                                                   fit_columns_on_grid_load=True,
-                                                   height=450, 
-                                                   width='100%',
-                                                   allow_unsafe_jscode=True)
-                            
-                            edited_stats_df = pd.DataFrame(grid_response['data'])
-                            
-                            # Add action buttons
-                            col1, col2, col3 = st.columns(3)
+                            # Action buttons outside the form
+                            col1, col2 = st.columns(2)
                             
                             with col1:
-                                if st.button("Update Statistics", key="update_stats"):
-                                    # Validate that Std values are not zero or negative
-                                    invalid_std = edited_stats_df[edited_stats_df['Std'] <= 0]
-                                    if not invalid_std.empty:
-                                        st.error(f"Standard deviation must be greater than 0 for: {', '.join(invalid_std['Attribute'].tolist())}")
-                                    else:
-                                        # Update the df_statistics with edited values
-                                        for _, row in edited_stats_df.iterrows():
-                                            attr = row['Attribute']
-                                            if attr in st.session_state.ga_optimizer['df_statistics']:
-                                                st.session_state.ga_optimizer['df_statistics'][attr]['mean'] = float(row['Mean'])
-                                                st.session_state.ga_optimizer['df_statistics'][attr]['std'] = float(row['Std'])
-                                                st.session_state.ga_optimizer['df_statistics'][attr]['min'] = float(row['Min'])
-                                                st.session_state.ga_optimizer['df_statistics'][attr]['max'] = float(row['Max'])
-                                                st.session_state.ga_optimizer['df_statistics'][attr]['median'] = float(row['Median'])
-                                        
-                                        st.success("Statistics updated successfully!")
-                                        st.rerun()
-                            
-                            with col2:
                                 if st.button("Reset to Original", key="reset_stats"):
                                     st.session_state.ga_optimizer['df_statistics'] = calculate_df_statistics(edited_df)
                                     st.success("Statistics reset to original calculated values.")
                                     st.rerun()
                             
-                            with col3:
+                            with col2:
                                 if st.button("Recalculate Z-Score", key="recalc_zscore"):
                                     if 'edited_df' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['edited_df'] is not None:
                                         if st.session_state.ga_optimizer['edited_df']['Productivity'].isnull().any() or (st.session_state.ga_optimizer['edited_df']['Productivity'] == "").any():
                                             st.error("Please ensure all values in the 'Productivity' column are filled before recalculating Z-score.")
                                         else:
-                                            # Recalculate z-scored data with updated statistics
+                                            # Use the directly updated df_statistics from session state
                                             zscored_df = zscore_data(st.session_state.ga_optimizer['edited_df'], st.session_state.ga_optimizer['df_statistics'])
                                             st.session_state.ga_optimizer['zscored_df'] = zscored_df
                                             st.session_state.ga_optimizer['zscored_statistics'] = calculate_zscoredf_statistics(zscored_df)
@@ -378,11 +397,12 @@ def ga_optimization_section():
                         if edited_df['Productivity'].isnull().any() or (edited_df['Productivity'] == "").any():
                             st.error("Please ensure all values in the 'Productivity' column are filled.")
                         else:
+                            # Use the directly updated df_statistics from session state
                             zscored_df = zscore_data(edited_df, st.session_state.ga_optimizer['df_statistics'])
                             st.session_state.ga_optimizer['zscored_df'] = zscored_df
-                            st.session_state.ga_optimizer['zscored_statistics'] = calculate_zscoredf_statistics(st.session_state.ga_optimizer['zscored_df'])
+                            st.session_state.ga_optimizer['zscored_statistics'] = calculate_zscoredf_statistics(zscored_df)
                             st.session_state.ga_optimizer['show_zscore'] = True
-                            st.success("Data has been Z-Scored.")
+                            st.success("Data has been Z-Scored using current statistics.")
                             st.rerun()
 
                 if st.session_state.ga_optimizer['show_zscore']:
@@ -662,56 +682,145 @@ def fetch_consolidated_data(well_ids):
         log_message(logging.ERROR, f"Error in fetch_consolidated_data: {str(e)}")
         raise
 
+def validate_ga_result(result, model_index):
+    """Validate a single GA result structure and log any issues."""
+    try:
+        if not isinstance(result, (tuple, list)):
+            log_message(logging.ERROR, f"Model {model_index}: Result is not a tuple/list, type: {type(result)}")
+            return False
+            
+        if len(result) != 9:
+            log_message(logging.ERROR, f"Model {model_index}: Result has {len(result)} elements, expected 9")
+            log_message(logging.ERROR, f"Model {model_index}: Result structure: {result}")
+            return False
+            
+        best_ind, weighted_r2_score, response_equation, selected_feature_names, errors_df, predicted_values, zscored_df, excluded_rows, full_dataset_r2 = result
+        
+        # Validate each component
+        if best_ind is None:
+            log_message(logging.WARNING, f"Model {model_index}: best_ind is None")
+            
+        if not isinstance(weighted_r2_score, (int, float)):
+            log_message(logging.ERROR, f"Model {model_index}: weighted_r2_score is not numeric: {type(weighted_r2_score)}")
+            return False
+            
+        if not isinstance(response_equation, str):
+            log_message(logging.ERROR, f"Model {model_index}: response_equation is not string: {type(response_equation)}")
+            return False
+            
+        if not isinstance(selected_feature_names, list):
+            log_message(logging.ERROR, f"Model {model_index}: selected_feature_names is not list: {type(selected_feature_names)}")
+            return False
+            
+        if errors_df is not None and not hasattr(errors_df, 'columns'):
+            log_message(logging.ERROR, f"Model {model_index}: errors_df is not a DataFrame: {type(errors_df)}")
+            return False
+            
+        log_message(logging.DEBUG, f"Model {model_index}: Validation passed")
+        return True
+        
+    except Exception as validation_error:
+        log_message(logging.ERROR, f"Model {model_index}: Validation error: {str(validation_error)}")
+        import traceback
+        log_message(logging.ERROR, f"Model {model_index}: Validation traceback: {traceback.format_exc()}")
+        return False
+
 def display_ga_results():
     with warnings.catch_warnings(record=True) as caught_warnings:
         warnings.simplefilter("always")
 
         try:
-            st.success(f"Genetic Algorithm Optimization Complete! Generated {len(st.session_state.ga_optimizer['results'])} models.")
-
+            log_message(logging.DEBUG, f"Starting display_ga_results with {len(st.session_state.ga_optimizer['results'])} models")
+            
+            # Validate all results first
+            valid_results = []
             for i, result in enumerate(st.session_state.ga_optimizer['results']):
-                best_ind, weighted_r2_score, response_equation, selected_feature_names, errors_df, predicted_values, zscored_df, excluded_rows, full_dataset_r2 = result
+                if validate_ga_result(result, i+1):
+                    valid_results.append((i, result))
+                else:
+                    log_message(logging.ERROR, f"Model {i+1}: Failed validation, skipping display")
+            
+            if not valid_results:
+                st.error("No valid results to display. Please check the logs for validation errors.")
+                return
+                
+            st.success(f"Genetic Algorithm Optimization Complete! Generated {len(valid_results)} valid models out of {len(st.session_state.ga_optimizer['results'])} total.")
+
+            for original_index, result in valid_results:
+                try:
+                    model_num = original_index + 1
+                    log_message(logging.DEBUG, f"Processing validated model {model_num}")
+                    best_ind, weighted_r2_score, response_equation, selected_feature_names, errors_df, predicted_values, zscored_df, excluded_rows, full_dataset_r2 = result
+                    log_message(logging.DEBUG, f"Model {model_num} unpacked successfully - R²: {weighted_r2_score}, Features: {len(selected_feature_names)}")
+                except Exception as unpack_error:
+                    log_message(logging.ERROR, f"Error unpacking validated result for model {model_num}: {str(unpack_error)}")
+                    log_message(logging.ERROR, f"Result structure: {result}")
+                    continue
                  
-                st.subheader(f"Model {i+1}")
+                st.subheader(f"Model {model_num}")
                 st.write(f"Weighted R² Score (Train/Test): {weighted_r2_score:.4f}")
                 st.write(f"Full Dataset R² Score: {full_dataset_r2:.4f}")
                 
                 # Add monotonicity information if available
-                if hasattr(best_ind, 'monotonicity_percent'):
-                    monotonicity_pct = best_ind.monotonicity_percent * 100
-                    st.write(f"Model Monotonicity: {monotonicity_pct:.1f}%")
-                    
-                    # Add visual indicator for monotonicity
-                    if monotonicity_pct >= 90:
-                        st.success("✅ This model meets the 90% monotonicity target")
-                    elif monotonicity_pct >= 75:
-                        st.info("ℹ️ This model has good monotonicity but doesn't meet the 90% target")
+                try:
+                    log_message(logging.DEBUG, f"Model {model_num}: Checking monotonicity information")
+                    if hasattr(best_ind, 'monotonicity_percent'):
+                        monotonicity_pct = best_ind.monotonicity_percent * 100
+                        log_message(logging.DEBUG, f"Model {model_num}: Monotonicity percentage: {monotonicity_pct:.1f}%")
+                        st.write(f"Model Monotonicity: {monotonicity_pct:.1f}%")
+                        
+                        # Add visual indicator for monotonicity
+                        if monotonicity_pct >= 90:
+                            st.success("✅ This model meets the 90% monotonicity target")
+                        elif monotonicity_pct >= 75:
+                            st.info("ℹ️ This model has good monotonicity but doesn't meet the 90% target")
+                        else:
+                            st.warning("⚠️ This model has low monotonicity")
                     else:
-                        st.warning("⚠️ This model has low monotonicity")
+                        log_message(logging.DEBUG, f"Model {model_num}: No monotonicity information available")
+                except Exception as mono_error:
+                    log_message(logging.ERROR, f"Model {model_num}: Error processing monotonicity information: {str(mono_error)}")
+                    log_message(logging.ERROR, f"Model {model_num}: best_ind type: {type(best_ind)}, best_ind attributes: {dir(best_ind) if hasattr(best_ind, '__dict__') else 'No attributes'}")
                     
                     # Show attribute monotonicity if available
-                    if hasattr(best_ind, 'key_attr_monotonicity') and best_ind.key_attr_monotonicity:
-                        st.write("### Selected Attribute Monotonicity")
-                        st.info("For hydraulic fracturing, productivity should increase as these selected attributes increase.")
-                        key_attrs = best_ind.key_attr_monotonicity
-                        
-                        # Create a table for attributes monotonicity
-                        key_attr_data = []
-                        for attr, info in key_attrs.items():
-                            monotonicity_pct = info['monotonic_percent'] * 100
-                            strict_pct = info.get('strict_monotonic_percent', 0) * 100
-                            direction = info['direction']
+                    try:
+                        log_message(logging.DEBUG, f"Model {model_num}: Checking key attribute monotonicity")
+                        if hasattr(best_ind, 'key_attr_monotonicity') and best_ind.key_attr_monotonicity:
+                            log_message(logging.DEBUG, f"Model {model_num}: Processing key attribute monotonicity data")
+                            st.write("### Selected Attribute Monotonicity")
+                            st.info("For hydraulic fracturing, productivity should increase as these selected attributes increase.")
+                            key_attrs = best_ind.key_attr_monotonicity
+                            log_message(logging.DEBUG, f"Model {model_num}: Key attributes: {list(key_attrs.keys())}")
                             
-                            # For selected attributes, we need INCREASING monotonicity
-                            is_valid = direction == "increasing" and monotonicity_pct >= 90
-                            
-                            key_attr_data.append({
-                                "Attribute": attr,
-                                "Monotonicity": f"{monotonicity_pct:.1f}%",
-                                "Strictly Increasing": f"{strict_pct:.1f}%" if 'strict_monotonic_percent' in info else "N/A",
-                                "Direction": direction.capitalize(),
-                                "Valid": "✅ Yes" if is_valid else "❌ No"
-                            })
+                            # Create a table for attributes monotonicity
+                            key_attr_data = []
+                            for attr, info in key_attrs.items():
+                                try:
+                                    log_message(logging.DEBUG, f"Model {model_num}: Processing attribute {attr}")
+                                    monotonicity_pct = info['monotonic_percent'] * 100
+                                    strict_pct = info.get('strict_monotonic_percent', 0) * 100
+                                    direction = info['direction']
+                                    
+                                    # For selected attributes, we need INCREASING monotonicity
+                                    is_valid = direction == "increasing" and monotonicity_pct >= 90
+                                    
+                                    key_attr_data.append({
+                                        "Attribute": attr,
+                                        "Monotonicity": f"{monotonicity_pct:.1f}%",
+                                        "Strictly Increasing": f"{strict_pct:.1f}%" if 'strict_monotonic_percent' in info else "N/A",
+                                        "Direction": direction.capitalize(),
+                                        "Valid": "✅ Yes" if is_valid else "❌ No"
+                                    })
+                                    log_message(logging.DEBUG, f"Model {model_num}: Successfully processed attribute {attr}")
+                                except Exception as attr_error:
+                                    log_message(logging.ERROR, f"Model {model_num}: Error processing attribute {attr}: {str(attr_error)}")
+                                    log_message(logging.ERROR, f"Model {model_num}: Attribute info: {info}")
+                        else:
+                            log_message(logging.DEBUG, f"Model {model_num}: No key attribute monotonicity data available")
+                    except Exception as key_attr_error:
+                        log_message(logging.ERROR, f"Model {model_num}: Error in key attribute monotonicity section: {str(key_attr_error)}")
+                        import traceback
+                        log_message(logging.ERROR, f"Model {model_num}: Key attribute traceback: {traceback.format_exc()}")
                         
                         # Display as a dataframe
                         if key_attr_data:
@@ -728,7 +837,7 @@ def display_ga_results():
                                 st.warning(f"⚠️ Only {valid_count} out of {total_count} selected attributes have properly increasing monotonic relationships with productivity.")
                             
                             # Add a button to show detailed plots for selected attributes
-                            if st.button("Show Attribute Monotonicity Plots", key=f"key_attr_plots_{i}"):
+                            if st.button("Show Attribute Monotonicity Plots", key=f"key_attr_plots_{original_index}"):
                                 for attr, info in key_attrs.items():
                                     test_points = info['test_points']
                                     predictions = info['predictions']
@@ -806,11 +915,11 @@ def display_ga_results():
                         "Select percentage of top error points to exclude",
                         options=[5, 10, 15, 18, 20, 22, 25, 30],
                         format_func=lambda x: f"{x}%",
-                        key=f"error_percentage_{i}"
+                        key=f"error_percentage_{original_index}"
                     )
 
                     # Button to apply the exclusion
-                    if st.button("Apply Exclusion", key=f"apply_exclusion_{i}"):
+                    if st.button("Apply Exclusion", key=f"apply_exclusion_{original_index}"):
                         # Sort errors_df by absolute error
                         errors_df['Abs_Error'] = abs(errors_df['Error'])
                         sorted_errors = errors_df.sort_values('Abs_Error', ascending=False)
@@ -844,10 +953,22 @@ def display_ga_results():
                         st.rerun()
                     
                     st.write("Error Table for Individual Data Points")
-                    # Drop data_id and well_id columns if they exist
-                    display_columns = [col for col in errors_df.columns if col not in ['data_id', 'well_id']]
-                    errors_df_display = errors_df[display_columns]
-                    st.dataframe(errors_df_display, use_container_width=True, hide_index=True)
+                    try:
+                        log_message(logging.DEBUG, f"Model {model_num}: Processing error table, shape: {errors_df.shape}")
+                        log_message(logging.DEBUG, f"Model {model_num}: Error table columns: {list(errors_df.columns)}")
+                        
+                        # Drop data_id and well_id columns if they exist
+                        display_columns = [col for col in errors_df.columns if col not in ['data_id', 'well_id']]
+                        log_message(logging.DEBUG, f"Model {model_num}: Display columns: {display_columns}")
+                        
+                        errors_df_display = errors_df[display_columns]
+                        log_message(logging.DEBUG, f"Model {model_num}: Error display table created successfully")
+                        st.dataframe(errors_df_display, use_container_width=True, hide_index=True)
+                    except Exception as error_table_error:
+                        log_message(logging.ERROR, f"Model {model_num}: Error processing error table: {str(error_table_error)}")
+                        log_message(logging.ERROR, f"Model {model_num}: errors_df type: {type(errors_df)}, errors_df info: {errors_df.info() if hasattr(errors_df, 'info') else 'Not a DataFrame'}")
+                        import traceback
+                        log_message(logging.ERROR, f"Model {model_num}: Error table traceback: {traceback.format_exc()}")
 
                     st.write("Actual vs Predicted Productivity Plot")
                     fig = plot_actual_vs_predicted(errors_df)
@@ -877,13 +998,13 @@ def display_ga_results():
                         col1, col2, col3 = st.columns([1, 1, 1])
                         
                         with col1:
-                            show_more_visuals = st.button(f"Show More Visuals", key=f"more_visuals_{i}")
+                            show_more_visuals = st.button(f"Show More Visuals", key=f"more_visuals_{original_index}")
                         
                         with col2:
-                            model_name = st.text_input("Model Name", key=f"model_name_{i}", placeholder="Enter model name")
+                            model_name = st.text_input("Model Name", key=f"model_name_{original_index}", placeholder="Enter model name")
                         
                         with col3:
-                            save_model = st.button("Save Model", key=f"save_model_{i}", disabled=not model_name)
+                            save_model = st.button("Save Model", key=f"save_model_{original_index}", disabled=not model_name)
 
                         if show_more_visuals:
                             st.write("Feature Importance Chart")
@@ -946,26 +1067,47 @@ def display_ga_results():
                         st.error(f"An error occurred during sensitivity analysis: {str(e)}")
                         log_message(logging.ERROR, f"Error in sensitivity analysis: {str(e)}")
 
-            if st.session_state.ga_optimizer['results']:
-                with pd.ExcelWriter('genetic_algorithm_results.xlsx') as writer:
-                    for i, result in enumerate(st.session_state.ga_optimizer['results']):
-                        best_ind, weighted_r2_score, response_equation, selected_feature_names, errors_df, predicted_values, zscored_df, excluded_rows, full_dataset_r2 = result
-                        
-                        # Add monotonicity information to Excel if available
-                        model_info = {
-                            'R² Score': weighted_r2_score, 
-                            'Full Dataset R²': full_dataset_r2,
-                            'Response Equation': response_equation
-                        }
-                        
-                        if hasattr(best_ind, 'monotonicity_percent'):
-                            model_info['Monotonicity (%)'] = best_ind.monotonicity_percent * 100
-                        
-                        pd.DataFrame([model_info]).to_excel(writer, sheet_name=f'Model_{i+1}_Details')
-                        pd.DataFrame(selected_feature_names, columns=['Selected Features']).to_excel(writer, sheet_name=f'Model_{i+1}_Features')
-                        # Drop data_id and well_id columns if they exist
-                        display_columns = [col for col in errors_df.columns if col not in ['data_id', 'well_id']]
-                        errors_df[display_columns].to_excel(writer, sheet_name=f'Model_{i+1}_Errors')
+            if valid_results:
+                try:
+                    log_message(logging.DEBUG, "Starting Excel export for GA results")
+                    with pd.ExcelWriter('genetic_algorithm_results.xlsx') as writer:
+                        for original_index, result in valid_results:
+                            try:
+                                model_num = original_index + 1
+                                log_message(logging.DEBUG, f"Excel export: Processing model {model_num}")
+                                best_ind, weighted_r2_score, response_equation, selected_feature_names, errors_df, predicted_values, zscored_df, excluded_rows, full_dataset_r2 = result
+                                
+                                # Add monotonicity information to Excel if available
+                                model_info = {
+                                    'R² Score': weighted_r2_score, 
+                                    'Full Dataset R²': full_dataset_r2,
+                                    'Response Equation': response_equation
+                                }
+                                
+                                if hasattr(best_ind, 'monotonicity_percent'):
+                                    model_info['Monotonicity (%)'] = best_ind.monotonicity_percent * 100
+                                
+                                log_message(logging.DEBUG, f"Excel export: Writing model {model_num} details")
+                                pd.DataFrame([model_info]).to_excel(writer, sheet_name=f'Model_{model_num}_Details')
+                                
+                                log_message(logging.DEBUG, f"Excel export: Writing model {model_num} features")
+                                pd.DataFrame(selected_feature_names, columns=['Selected Features']).to_excel(writer, sheet_name=f'Model_{model_num}_Features')
+                                
+                                # Drop data_id and well_id columns if they exist
+                                log_message(logging.DEBUG, f"Excel export: Processing error data for model {model_num}")
+                                display_columns = [col for col in errors_df.columns if col not in ['data_id', 'well_id']]
+                                log_message(logging.DEBUG, f"Excel export: Model {model_num} error columns: {display_columns}")
+                                errors_df[display_columns].to_excel(writer, sheet_name=f'Model_{model_num}_Errors')
+                                log_message(logging.DEBUG, f"Excel export: Model {model_num} completed successfully")
+                            except Exception as excel_model_error:
+                                log_message(logging.ERROR, f"Excel export: Error processing model {model_num}: {str(excel_model_error)}")
+                                import traceback
+                                log_message(logging.ERROR, f"Excel export: Model {model_num} traceback: {traceback.format_exc()}")
+                    log_message(logging.DEBUG, "Excel export completed successfully")
+                except Exception as excel_error:
+                    log_message(logging.ERROR, f"Excel export: General error: {str(excel_error)}")
+                    import traceback
+                    log_message(logging.ERROR, f"Excel export: General traceback: {traceback.format_exc()}")
 
                 with open('genetic_algorithm_results.xlsx', 'rb') as file:
                     st.download_button(
@@ -978,7 +1120,11 @@ def display_ga_results():
                 st.warning("No results available to download.")
 
         except Exception as e:
+            import traceback
             log_message(logging.ERROR, f"Error in display_ga_results: {str(e)}")
+            log_message(logging.ERROR, f"Full traceback: {traceback.format_exc()}")
+            log_message(logging.ERROR, f"Session state ga_optimizer keys: {list(st.session_state.ga_optimizer.keys()) if 'ga_optimizer' in st.session_state else 'ga_optimizer not in session_state'}")
+            log_message(logging.ERROR, f"Results count: {len(st.session_state.ga_optimizer['results']) if 'ga_optimizer' in st.session_state and 'results' in st.session_state.ga_optimizer else 'No results'}")
             st.error("An error occurred while displaying the results. Please check the logs for more information.")
 
         # Log any warnings that were caught
