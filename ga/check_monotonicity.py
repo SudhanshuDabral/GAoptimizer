@@ -6,7 +6,8 @@ def calculate_median(arr, condition_value):
     medians = []
     for i in range(len(arr)):
         current_window = arr[:i+1]
-        filtered_values = [x for x in current_window if x > condition_value]
+        # Filter out None values and values that don't meet the condition
+        filtered_values = [x for x in current_window if x is not None and x > condition_value]
         if filtered_values:
             median_value = np.median(filtered_values)
         else:
@@ -15,12 +16,15 @@ def calculate_median(arr, condition_value):
     return medians
 
 def calculate_cumulative_sum(arr):
-    return np.cumsum(arr).tolist()
+    # Replace None values with 0 before calculating cumulative sum
+    clean_arr = [x if x is not None else 0 for x in arr]
+    return np.cumsum(clean_arr).tolist()
 
 def calculate_ratio(numerator, denominator):
     ratios = []
     for num, denom in zip(numerator, denominator):
-        if denom == 0:
+        # Handle None values and zero denominators
+        if num is None or denom is None or denom == 0:
             ratios.append(0)
         else:
             ratios.append(num / denom)
@@ -53,12 +57,26 @@ def calculate_stage(df, column, avg, std):
     return stage_values
 
 def check_monotonicity(array_data, df_statistics, response_equation):
+    import logging
+    
     # Create a DataFrame from array_data with correct column names including new energy columns
     expected_columns = ['pmaxmin_win', 'downhole_win_prop', 'slr_win', 'energyproxy', 'energydissipated']
     if isinstance(array_data, pd.DataFrame):
         df = array_data
     else:
         df = pd.DataFrame(array_data, columns=expected_columns)
+
+    # Log input data structure
+    print(f"DEBUG: check_monotonicity called with df shape: {df.shape}")
+    print(f"DEBUG: check_monotonicity df columns: {list(df.columns)}")
+    print(f"DEBUG: df_statistics keys: {list(df_statistics.keys())}")
+    
+    # Log sample values from energy columns
+    for col in ['energyproxy', 'energydissipated']:
+        if col in df.columns:
+            non_null = df[col].count()
+            null_count = df[col].isnull().sum()
+            print(f"DEBUG: {col} - non_null: {non_null}, null: {null_count}, sample: {df[col].head(3).tolist()}")
 
     # Ensure all expected columns are present
     for col in expected_columns:
@@ -79,21 +97,27 @@ def check_monotonicity(array_data, df_statistics, response_equation):
     # Calculate new MATLAB energy columns
     # 1. med_energy_dissipated - similar to median_dp but using energydissipated
     df['med_energy_dissipated_original'] = calculate_median(df['energydissipated'], 0)
+    print(f"DEBUG: med_energy_dissipated_original sample: {df['med_energy_dissipated_original'].head(3).tolist()}")
     
     # 2. med_energy_proxy - similar to median_dp but using energyproxy  
     df['med_energy_proxy_original'] = calculate_median(df['energyproxy'], 0)
+    print(f"DEBUG: med_energy_proxy_original sample: {df['med_energy_proxy_original'].head(3).tolist()}")
     
     # 3. total_energy_dissipated - cumulative energydissipated
     df['total_energy_dissipated_original'] = calculate_cumulative_sum(df['energydissipated'])
+    print(f"DEBUG: total_energy_dissipated_original sample: {df['total_energy_dissipated_original'].head(3).tolist()}")
     
     # 4. total_energy_proxy - cumulative energyproxy
     df['total_energy_proxy_original'] = calculate_cumulative_sum(df['energyproxy'])
+    print(f"DEBUG: total_energy_proxy_original sample: {df['total_energy_proxy_original'].head(3).tolist()}")
     
     # 5. med_energy_ratio - median energy dissipated / median energy proxy
     df['med_energy_ratio_original'] = calculate_ratio(df['med_energy_dissipated_original'], df['med_energy_proxy_original'])
+    print(f"DEBUG: med_energy_ratio_original sample: {df['med_energy_ratio_original'].head(3).tolist()}")
     
     # 6. total_energy_ratio - total energy dissipated / total energy proxy
     df['total_energy_ratio_original'] = calculate_ratio(df['total_energy_dissipated_original'], df['total_energy_proxy_original'])
+    print(f"DEBUG: total_energy_ratio_original sample: {df['total_energy_ratio_original'].head(3).tolist()}")
 
     # Calculate stage values using statistics from df_statistics
     df['tee_stage'] = calculate_stage(df, 'tee_original', df_statistics['tee']['mean'], df_statistics['tee']['std'])
@@ -106,12 +130,30 @@ def check_monotonicity(array_data, df_statistics, response_equation):
     df['total_dh_prop_stage'] = calculate_stage(df, 'total_dh_prop_original', df_statistics['total_dh_prop']['mean'], df_statistics['total_dh_prop']['std'])
     
     # Calculate stage values for new MATLAB energy columns
+    print(f"DEBUG: About to calculate energy stage values using df_statistics")
+    for energy_attr in ['med_energy_proxy', 'med_energy_dissipated', 'med_energy_ratio', 'total_energy_proxy', 'total_energy_dissipated', 'total_energy_ratio']:
+        if energy_attr in df_statistics:
+            print(f"DEBUG: {energy_attr} stats: mean={df_statistics[energy_attr]['mean']:.6f}, std={df_statistics[energy_attr]['std']:.6f}")
+        else:
+            print(f"DEBUG: {energy_attr} NOT FOUND in df_statistics!")
+    
     df['med_energy_proxy_stage'] = calculate_stage(df, 'med_energy_proxy_original', df_statistics['med_energy_proxy']['mean'], df_statistics['med_energy_proxy']['std'])
+    print(f"DEBUG: med_energy_proxy_stage sample: {df['med_energy_proxy_stage'].head(3).tolist()}")
+    
     df['med_energy_dissipated_stage'] = calculate_stage(df, 'med_energy_dissipated_original', df_statistics['med_energy_dissipated']['mean'], df_statistics['med_energy_dissipated']['std'])
+    print(f"DEBUG: med_energy_dissipated_stage sample: {df['med_energy_dissipated_stage'].head(3).tolist()}")
+    
     df['med_energy_ratio_stage'] = calculate_stage(df, 'med_energy_ratio_original', df_statistics['med_energy_ratio']['mean'], df_statistics['med_energy_ratio']['std'])
+    print(f"DEBUG: med_energy_ratio_stage sample: {df['med_energy_ratio_stage'].head(3).tolist()}")
+    
     df['total_energy_proxy_stage'] = calculate_stage(df, 'total_energy_proxy_original', df_statistics['total_energy_proxy']['mean'], df_statistics['total_energy_proxy']['std'])
+    print(f"DEBUG: total_energy_proxy_stage sample: {df['total_energy_proxy_stage'].head(3).tolist()}")
+    
     df['total_energy_dissipated_stage'] = calculate_stage(df, 'total_energy_dissipated_original', df_statistics['total_energy_dissipated']['mean'], df_statistics['total_energy_dissipated']['std'])
+    print(f"DEBUG: total_energy_dissipated_stage sample: {df['total_energy_dissipated_stage'].head(3).tolist()}")
+    
     df['total_energy_ratio_stage'] = calculate_stage(df, 'total_energy_ratio_original', df_statistics['total_energy_ratio']['mean'], df_statistics['total_energy_ratio']['std'])
+    print(f"DEBUG: total_energy_ratio_stage sample: {df['total_energy_ratio_stage'].head(3).tolist()}")
 
     # Calculate Productivity - updated to include new MATLAB energy columns
     stage_columns = ['tee_stage', 'median_dhpm_stage', 'median_dp_stage', 'downhole_ppm_stage', 

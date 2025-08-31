@@ -1437,6 +1437,9 @@ def monotonicity_check_modal():
         
         for stage, result_df in st.session_state.ga_optimizer['monotonicity_results'].items():
             st.subheader(f"Results for Stage {stage}")
+            
+
+            
             required_columns = ['Productivity', 'total_dhppm_stage', 'total_slurry_dp_stage']
             missing_columns = [col for col in required_columns if col not in result_df.columns]
             
@@ -1504,23 +1507,48 @@ def monotonicity_check_modal():
                                         name=f"{attr} vs Productivity"
                                     ))
                                     
-                                    # Add trend line
-                                    # Calculate linear fit
-                                    import numpy as np
-                                    z = np.polyfit(sorted_df[attr_col], sorted_df['Productivity'], 1)
-                                    p = np.poly1d(z)
-                                    
-                                    # Check if trend is positive or negative
-                                    trend_slope = z[0]
-                                    trend_color = 'green' if trend_slope > 0 else 'red'
-                                    
-                                    fig.add_trace(go.Scatter(
-                                        x=sorted_df[attr_col],
-                                        y=p(sorted_df[attr_col]),
-                                        mode='lines',
-                                        name='Trend Line',
-                                        line=dict(color=trend_color, dash='dash')
-                                    ))
+                                    # Add trend line with error handling
+                                    try:
+                                        # Calculate linear fit
+                                        import numpy as np
+                                        
+                                        # Clean the data before fitting
+                                        x_data = sorted_df[attr_col].dropna()
+                                        y_data = sorted_df['Productivity'].dropna()
+                                        
+                                        # Ensure we have matching data points
+                                        if len(x_data) == len(y_data) and len(x_data) > 1:
+                                            # Check for sufficient variation in x_data
+                                            if np.std(x_data) > 1e-10:  # Avoid near-zero standard deviation
+                                                z = np.polyfit(x_data, y_data, 1)
+                                                p = np.poly1d(z)
+                                                
+                                                # Check if trend is positive or negative
+                                                trend_slope = z[0]
+                                                trend_color = 'green' if trend_slope > 0 else 'red'
+                                                
+                                                fig.add_trace(go.Scatter(
+                                                    x=x_data,
+                                                    y=p(x_data),
+                                                    mode='lines',
+                                                    name='Trend Line',
+                                                    line=dict(color=trend_color, dash='dash')
+                                                ))
+                                            else:
+                                                # Add a horizontal line if no variation in x
+                                                mean_y = np.mean(y_data)
+                                                fig.add_trace(go.Scatter(
+                                                    x=[x_data.min(), x_data.max()],
+                                                    y=[mean_y, mean_y],
+                                                    mode='lines',
+                                                    name='Mean Line',
+                                                    line=dict(color='blue', dash='dash')
+                                                ))
+                                        else:
+                                            log_message(logging.WARNING, f"Insufficient data points for trend line in {attr}")
+                                    except Exception as trend_error:
+                                        log_message(logging.WARNING, f"Could not calculate trend line for {attr}: {str(trend_error)}")
+                                        # Continue without trend line
                                     
                                     # Get monotonicity metrics
                                     pct_col = f"{attr}_monotonicity_pct"
@@ -1544,11 +1572,18 @@ def monotonicity_check_modal():
                                     
                                     st.plotly_chart(fig, use_container_width=True)
                                     
-                                    # Add explanation based on trend direction
-                                    if trend_slope > 0:
-                                        st.success(f"✅ The overall trend shows productivity increasing with {attr}, which is the physically expected behavior.")
-                                    else:
-                                        st.error(f"❌ The overall trend shows productivity decreasing with {attr}, which is contrary to the expected physical behavior in hydraulic fracturing.")
+                                    # Add explanation based on trend direction (only if trend was calculated)
+                                    try:
+                                        if 'trend_slope' in locals():
+                                            if trend_slope > 0:
+                                                st.success(f"✅ The overall trend shows productivity increasing with {attr}, which is the physically expected behavior.")
+                                            else:
+                                                st.error(f"❌ The overall trend shows productivity decreasing with {attr}, which is contrary to the expected physical behavior in hydraulic fracturing.")
+                                        else:
+                                            st.info(f"ℹ️ Trend analysis not available for {attr} due to data characteristics.")
+                                    except Exception as trend_eval_error:
+                                        log_message(logging.WARNING, f"Could not evaluate trend direction for {attr}: {str(trend_eval_error)}")
+                                        st.info(f"ℹ️ Trend analysis not available for {attr}.")
                                     
                                     # Show non-monotonic percentage if available
                                     if non_mono_col in result_df.columns:
@@ -1560,6 +1595,36 @@ def monotonicity_check_modal():
                                                 st.write("For optimal hydraulic fracturing models, productivity should consistently increase with this attribute.")
                     else:
                         st.warning("No key attribute monotonicity metrics available for this stage.")
+        
+        # Add consolidated productivity summary for all stages
+        st.markdown("---")
+        st.subheader("Final Productivity Values")
+        st.write("This table shows the last computed productivity value for each stage.")
+        
+        # Create simple consolidated table with just Well, Stage, and Final Productivity
+        consolidated_data = []
+        for stage, result_df in st.session_state.ga_optimizer['monotonicity_results'].items():
+            if 'Productivity' in result_df.columns and len(result_df) > 0:
+                consolidated_data.append({
+                    "Well": selected_well,
+                    "Stage": stage,
+                    "Final Productivity": f"{result_df['Productivity'].iloc[-1]:.6f}"
+                })
+        
+        if consolidated_data:
+            consolidated_df = pd.DataFrame(consolidated_data)
+            st.dataframe(consolidated_df, use_container_width=True, hide_index=True)
+            
+            # Add download button for consolidated data
+            csv_data = consolidated_df.to_csv(index=False)
+            st.download_button(
+                label="Download Final Productivity Values",
+                data=csv_data.encode('utf-8'),
+                file_name=f"final_productivity_{selected_well}.csv",
+                mime="text/csv"
+            )
+        else:
+            st.warning("No productivity data available for any selected stages.")
         
         # Add export button if there are plots to export
         if st.session_state.monotonicity_plots:
@@ -1604,8 +1669,25 @@ def run_monotonicity_check(well_id, selected_stages, equation_to_use):
             # Use current statistics (revised if available, otherwise original) for monotonicity check
             current_stats = get_current_statistics()
             log_message(logging.DEBUG, f"Monotonicity check using statistics with keys: {list(current_stats.keys())}")
-            if 'tee' in current_stats:
-                log_message(logging.DEBUG, f"Monotonicity check using tee statistics: mean={current_stats['tee']['mean']:.6f}, std={current_stats['tee']['std']:.6f}")
+            
+            # Log the entire current_stats structure for debugging
+            log_message(logging.DEBUG, f"FULL CURRENT_STATS STRUCTURE FOR STAGE {stage}:")
+            for attr, stats in current_stats.items():
+                log_message(logging.DEBUG, f"  {attr}: mean={stats['mean']:.6f}, std={stats['std']:.6f}, min={stats['min']:.6f}, max={stats['max']:.6f}, median={stats['median']:.6f}")
+            
+            # Also log the array_data structure
+            log_message(logging.DEBUG, f"Array data columns for stage {stage}: {list(array_data.columns)}")
+            log_message(logging.DEBUG, f"Array data shape for stage {stage}: {array_data.shape}")
+            
+            # Log sample of array data for key energy columns
+            energy_columns = ['energyproxy', 'energydissipated']
+            for col in energy_columns:
+                if col in array_data.columns:
+                    non_null_count = array_data[col].count()
+                    null_count = array_data[col].isnull().sum()
+                    log_message(logging.DEBUG, f"  {col}: non-null={non_null_count}, null={null_count}, sample_values={array_data[col].head(5).tolist()}")
+                else:
+                    log_message(logging.WARNING, f"  {col}: COLUMN NOT FOUND in array_data")
             
             result_df = check_monotonicity_func(array_data, current_stats, equation_to_use)
             results[stage] = result_df
