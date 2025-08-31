@@ -5,6 +5,17 @@ import re
 
 # function to calculate zscore for the data using provided statistics
 def zscore_data(df, df_statistics=None):
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # Log what statistics are being passed
+    if df_statistics:
+        logger.debug(f"[zscore_data] Received df_statistics with keys: {list(df_statistics.keys())}")
+        if 'tee' in df_statistics:
+            logger.debug(f"[zscore_data] tee statistics: mean={df_statistics['tee']['mean']:.6f}, std={df_statistics['tee']['std']:.6f}")
+    else:
+        logger.warning(f"[zscore_data] No df_statistics provided, will calculate from data")
+    
     # Create a copy of the dataframe to avoid modifying the original
     zscored_df = df.copy()
     
@@ -20,20 +31,30 @@ def zscore_data(df, df_statistics=None):
             if df_statistics and column in df_statistics:
                 col_mean = df_statistics[column]['mean']
                 col_std = df_statistics[column]['std']
+                logger.debug(f"[zscore_data] Using provided statistics for {column}: mean={col_mean:.6f}, std={col_std:.6f}")
             else:
                 col_mean = zscored_df[column].mean()
                 col_std = zscored_df[column].std(ddof=1)
+                logger.debug(f"[zscore_data] Calculated statistics for {column}: mean={col_mean:.6f}, std={col_std:.6f}")
             
             if col_std != 0:  # Avoid division by zero
+                # Log the first few values for debugging (especially for tee)
+                if column == 'tee' and len(zscored_df) > 0:
+                    first_value = zscored_df[column].iloc[0]
+                    zscore_result = (first_value - col_mean) / col_std
+                    logger.debug(f"[zscore_data] tee first value: {first_value:.6f}, zscore: {zscore_result:.6f}")
+                
                 zscored_df[column] = (zscored_df[column] - col_mean) / col_std
             else:
                 # If standard deviation is zero, set all values to zero
                 zscored_df[column] = 0
+                logger.warning(f"[zscore_data] Zero standard deviation for {column}, setting all values to 0")
     
     # Add back preserved columns
     for col, data in preserved_data.items():
         zscored_df[col] = data
     
+    logger.info(f"[zscore_data] Z-scoring completed for {len(zscored_df.columns)} columns")
     return zscored_df
 
 # function to calculate statistics for the original data for modelling used in ga_main.py

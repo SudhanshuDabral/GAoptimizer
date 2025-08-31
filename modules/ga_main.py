@@ -44,6 +44,18 @@ logger = logging.getLogger(__name__)
 def log_message(level, message):
     logger.log(level, f"[GA Optimizer] {message}")
 
+def get_current_statistics():
+    """Get the current statistics to use for calculations (revised if available, otherwise original)"""
+    if st.session_state.ga_optimizer.get('revised_df_statistics'):
+        log_message(logging.DEBUG, "Using revised_df_statistics for calculations")
+        return st.session_state.ga_optimizer['revised_df_statistics']
+    elif st.session_state.ga_optimizer.get('df_statistics'):
+        log_message(logging.DEBUG, "Using original df_statistics for calculations")
+        return st.session_state.ga_optimizer['df_statistics']
+    else:
+        log_message(logging.WARNING, "No statistics available for calculations")
+        return None
+
 def initialize_ga_state():
     if 'ga_optimizer' not in st.session_state:
         st.session_state.ga_optimizer = {
@@ -55,7 +67,8 @@ def initialize_ga_state():
             'show_zscore': False,
             'regression_type': 'FPR',
             'monotonicity_results': {},
-            'df_statistics': None,
+            'df_statistics': None,  # Original calculated statistics
+            'revised_df_statistics': None,  # Manually revised statistics (used for all calculations)
             'zscored_statistics': None,
             'show_monotonicity': False,
             'show_sensitivity_test': False,
@@ -69,6 +82,7 @@ def initialize_ga_state():
             'coef_range': (-10.0, 10.0),
             'num_models': 3,
             'selected_monotonic_attributes': ['downhole_ppm', 'total_dhppm', 'tee', 'med_energy_proxy', 'total_energy_proxy'],
+            'statistics_manually_updated': False,  # Flag to track if statistics have been manually updated
         }
 
 def start_ga_optimization_callback():
@@ -118,8 +132,28 @@ def suppress_st_aggrid_warnings():
 def ga_optimization_section():
     with warnings.catch_warnings(record=True) as caught_warnings:
         warnings.simplefilter("always")
-
+        
         try:
+            # Log current state of statistics for debugging
+            if st.session_state.ga_optimizer.get('df_statistics'):
+                log_message(logging.DEBUG, f"GA section start - df_statistics available with keys: {list(st.session_state.ga_optimizer['df_statistics'].keys())}")
+                log_message(logging.DEBUG, f"GA section start - statistics_manually_updated flag: {st.session_state.ga_optimizer.get('statistics_manually_updated', False)}")
+                
+                # Log revised statistics status
+                if st.session_state.ga_optimizer.get('revised_df_statistics'):
+                    log_message(logging.DEBUG, f"GA section start - revised_df_statistics available with keys: {list(st.session_state.ga_optimizer['revised_df_statistics'].keys())}")
+                    # Check if revised differs from original (indicating manual update)
+                    if 'tee' in st.session_state.ga_optimizer['revised_df_statistics'] and 'tee' in st.session_state.ga_optimizer['df_statistics']:
+                        revised_tee = st.session_state.ga_optimizer['revised_df_statistics']['tee']['mean']
+                        original_tee = st.session_state.ga_optimizer['df_statistics']['tee']['mean']
+                        if abs(revised_tee - original_tee) > 0.001:
+                            log_message(logging.INFO, f"GA section start - REVISED STATISTICS DETECTED: tee mean revised={revised_tee:.6f}, original={original_tee:.6f}")
+                        else:
+                            log_message(logging.DEBUG, f"GA section start - Revised and original statistics match: tee mean={revised_tee:.6f}")
+                else:
+                    log_message(logging.DEBUG, "GA section start - No revised_df_statistics available")
+            else:
+                log_message(logging.DEBUG, "GA section start - No df_statistics available")
             # Add data source selection
             data_source = st.radio(
                 "Select Data Source",
@@ -156,7 +190,21 @@ def ga_optimization_section():
                             df['Productivity'] = ""
                         
                         st.session_state.ga_optimizer['edited_df'] = df
-                        st.session_state.ga_optimizer['df_statistics'] = calculate_df_statistics(df)
+                        original_stats = calculate_df_statistics(df)
+                        st.session_state.ga_optimizer['df_statistics'] = original_stats
+                        
+                        # Check if statistics have been manually updated
+                        manually_updated = st.session_state.ga_optimizer.get('statistics_manually_updated', False)
+                        log_message(logging.DEBUG, f"Database load - Manual update flag before processing: {manually_updated}")
+                        
+                        # Only initialize revised statistics if they don't exist or haven't been manually updated
+                        if not st.session_state.ga_optimizer.get('revised_df_statistics') or not manually_updated:
+                            st.session_state.ga_optimizer['revised_df_statistics'] = original_stats.copy()
+                            if not manually_updated:
+                                st.session_state.ga_optimizer['statistics_manually_updated'] = False
+                            log_message(logging.INFO, "Initialized both original and revised statistics from database data")
+                        else:
+                            log_message(logging.INFO, f"Preserved existing revised statistics (manually updated flag: {manually_updated})")
                         st.success(f"Data loaded for {len(selected_wells)} well(s).")
             else:  # File Upload
                 uploaded_file = st.file_uploader("Upload Excel/CSV File", type=['xlsx', 'xls', 'csv'])
@@ -219,7 +267,21 @@ def ga_optimization_section():
                         
                         # Store the uploaded data and calculate statistics
                         st.session_state.ga_optimizer['edited_df'] = df
-                        st.session_state.ga_optimizer['df_statistics'] = calculate_df_statistics(df)
+                        original_stats = calculate_df_statistics(df)
+                        st.session_state.ga_optimizer['df_statistics'] = original_stats
+                        
+                        # Check if statistics have been manually updated
+                        manually_updated = st.session_state.ga_optimizer.get('statistics_manually_updated', False)
+                        log_message(logging.DEBUG, f"File upload - Manual update flag before processing: {manually_updated}")
+                        
+                        # Only initialize revised statistics if they don't exist or haven't been manually updated
+                        if not st.session_state.ga_optimizer.get('revised_df_statistics') or not manually_updated:
+                            st.session_state.ga_optimizer['revised_df_statistics'] = original_stats.copy()
+                            if not manually_updated:
+                                st.session_state.ga_optimizer['statistics_manually_updated'] = False
+                            log_message(logging.INFO, "Initialized both original and revised statistics from uploaded file")
+                        else:
+                            log_message(logging.INFO, f"Preserved existing revised statistics (manually updated flag: {manually_updated})")
                         st.success("Data uploaded successfully.")
                             
                     except Exception as e:
@@ -265,7 +327,19 @@ def ga_optimization_section():
                     
                     edited_df = pd.DataFrame(grid_response['data'])
                     st.session_state.ga_optimizer['edited_df'] = edited_df
-                    st.session_state.ga_optimizer['df_statistics'] = calculate_df_statistics(edited_df)
+                    
+                    # Only recalculate statistics if they haven't been manually updated
+                    if not st.session_state.ga_optimizer.get('statistics_manually_updated', False):
+                        original_stats = calculate_df_statistics(edited_df)
+                        st.session_state.ga_optimizer['df_statistics'] = original_stats
+                        # Update revised statistics only if not manually updated
+                        st.session_state.ga_optimizer['revised_df_statistics'] = original_stats.copy()
+                        log_message(logging.DEBUG, "Recalculated both original and revised df_statistics from AgGrid data (not manually updated)")
+                    else:
+                        # Still update original statistics but preserve revised ones
+                        original_stats = calculate_df_statistics(edited_df)
+                        st.session_state.ga_optimizer['df_statistics'] = original_stats
+                        log_message(logging.DEBUG, "Updated original df_statistics but preserved manually updated revised_df_statistics")
 
                     # Add download button for data preview
                     st.download_button(
@@ -281,11 +355,13 @@ def ga_optimization_section():
                         st.info("Changes to these statistics will affect Z-scoring, monotonicity checks, and model calculations.")
                         
                         # Simple form to edit statistics
-                        if st.session_state.ga_optimizer['df_statistics']:
+                        current_stats = get_current_statistics()
+                        if current_stats:
                             st.subheader("Edit Dataset Statistics")
                             
-                            # Create form for editing statistics
-                            with st.form("edit_statistics_form"):
+                            # Create form for editing statistics with unique key
+                            form_key = f"edit_statistics_form_{hash(str(current_stats))}"
+                            with st.form(form_key, clear_on_submit=False):
                                 st.write("**Modify the statistical parameters directly:**")
                                 
                                 # Create columns for better layout
@@ -302,94 +378,189 @@ def ga_optimization_section():
                                 with col5:
                                     st.write("**Median**")
                                 
+                                # Store form values temporarily (don't update session state until submit)
+                                form_values = {}
+                                
                                 # Create input fields for each attribute
-                                for attr in st.session_state.ga_optimizer['df_statistics']:
+                                for attr in current_stats:
                                     st.write(f"**{attr}**")
                                     col1, col2, col3, col4, col5 = st.columns(5)
                                     
                                     with col1:
                                         new_mean = st.number_input(
                                             f"Mean", 
-                                            value=float(st.session_state.ga_optimizer['df_statistics'][attr]['mean']), 
+                                            value=float(current_stats[attr]['mean']), 
                                             format="%.6f",
-                                            key=f"form_mean_{attr}",
+                                            key=f"form_mean_{attr}_{form_key}",
                                             label_visibility="collapsed"
                                         )
                                     
                                     with col2:
                                         new_std = st.number_input(
                                             f"Std", 
-                                            value=float(st.session_state.ga_optimizer['df_statistics'][attr]['std']), 
+                                            value=float(current_stats[attr]['std']), 
                                             min_value=0.000001,  # Prevent zero std
                                             format="%.6f",
-                                            key=f"form_std_{attr}",
+                                            key=f"form_std_{attr}_{form_key}",
                                             label_visibility="collapsed"
                                         )
                                     
                                     with col3:
                                         new_min = st.number_input(
                                             f"Min", 
-                                            value=float(st.session_state.ga_optimizer['df_statistics'][attr]['min']), 
+                                            value=float(current_stats[attr]['min']), 
                                             format="%.6f",
-                                            key=f"form_min_{attr}",
+                                            key=f"form_min_{attr}_{form_key}",
                                             label_visibility="collapsed"
                                         )
                                     
                                     with col4:
                                         new_max = st.number_input(
                                             f"Max", 
-                                            value=float(st.session_state.ga_optimizer['df_statistics'][attr]['max']), 
+                                            value=float(current_stats[attr]['max']), 
                                             format="%.6f",
-                                            key=f"form_max_{attr}",
+                                            key=f"form_max_{attr}_{form_key}",
                                             label_visibility="collapsed"
                                         )
                                     
                                     with col5:
                                         new_median = st.number_input(
                                             f"Median", 
-                                            value=float(st.session_state.ga_optimizer['df_statistics'][attr]['median']), 
+                                            value=float(current_stats[attr]['median']), 
                                             format="%.6f",
-                                            key=f"form_median_{attr}",
+                                            key=f"form_median_{attr}_{form_key}",
                                             label_visibility="collapsed"
                                         )
                                     
-                                    # Directly update the df_statistics in session state
-                                    st.session_state.ga_optimizer['df_statistics'][attr]['mean'] = new_mean
-                                    st.session_state.ga_optimizer['df_statistics'][attr]['std'] = new_std
-                                    st.session_state.ga_optimizer['df_statistics'][attr]['min'] = new_min
-                                    st.session_state.ga_optimizer['df_statistics'][attr]['max'] = new_max
-                                    st.session_state.ga_optimizer['df_statistics'][attr]['median'] = new_median
+                                    # Store form values temporarily
+                                    form_values[attr] = {
+                                        'mean': new_mean,
+                                        'std': new_std,
+                                        'min': new_min,
+                                        'max': new_max,
+                                        'median': new_median
+                                    }
                                 
                                 # Form submit button
-                                submitted = st.form_submit_button("Update Statistics")
-                                if submitted:
+                                submitted = st.form_submit_button("Update Statistics", use_container_width=True)
+                                
+                            # Handle form submission outside the form context
+                            if submitted:
+                                try:
+                                    log_message(logging.INFO, f"Statistics form submitted. Updating {len(form_values)} attributes.")
+                                    
+                                    # Initialize revised_df_statistics if it doesn't exist
+                                    if not st.session_state.ga_optimizer.get('revised_df_statistics'):
+                                        st.session_state.ga_optimizer['revised_df_statistics'] = st.session_state.ga_optimizer['df_statistics'].copy()
+                                    
+                                    # Log original values for debugging
+                                    log_message(logging.DEBUG, f"Original revised_df_statistics keys: {list(st.session_state.ga_optimizer['revised_df_statistics'].keys())}")
+                                    
+                                    # Update revised statistics with form values (keep original statistics unchanged)
+                                    for attr, values in form_values.items():
+                                        old_values = st.session_state.ga_optimizer['revised_df_statistics'][attr].copy()
+                                        st.session_state.ga_optimizer['revised_df_statistics'][attr].update(values)
+                                        
+                                        # Log the changes for each attribute
+                                        log_message(logging.DEBUG, f"Updated revised {attr}: mean {old_values['mean']:.6f} -> {values['mean']:.6f}, "
+                                                  f"std {old_values['std']:.6f} -> {values['std']:.6f}, "
+                                                  f"min {old_values['min']:.6f} -> {values['min']:.6f}, "
+                                                  f"max {old_values['max']:.6f} -> {values['max']:.6f}, "
+                                                  f"median {old_values['median']:.6f} -> {values['median']:.6f}")
+                                    
+                                    # Set flag to indicate statistics have been manually updated
+                                    st.session_state.ga_optimizer['statistics_manually_updated'] = True
+                                    log_message(logging.INFO, "Revised statistics updated successfully in session state. Manual update flag set.")
+                                    
+                                    # Verify the update by checking a sample value
+                                    if 'tee' in st.session_state.ga_optimizer['revised_df_statistics']:
+                                        tee_mean = st.session_state.ga_optimizer['revised_df_statistics']['tee']['mean']
+                                        log_message(logging.INFO, f"POST-UPDATE VERIFICATION: revised tee mean is now {tee_mean:.6f}")
+                                    
                                     st.success("Statistics updated successfully!")
                                     st.rerun()
+                                    
+                                except Exception as e:
+                                    log_message(logging.ERROR, f"Error updating statistics: {str(e)}")
+                                    st.error(f"Error updating statistics: {str(e)}")
+                                    
+                                    # Log detailed error information
+                                    import traceback
+                                    log_message(logging.ERROR, f"Statistics update error traceback: {traceback.format_exc()}")
                             
                             # Action buttons outside the form
                             col1, col2 = st.columns(2)
                             
                             with col1:
                                 if st.button("Reset to Original", key="reset_stats"):
-                                    st.session_state.ga_optimizer['df_statistics'] = calculate_df_statistics(edited_df)
-                                    st.success("Statistics reset to original calculated values.")
-                                    st.rerun()
+                                    try:
+                                        log_message(logging.INFO, "Resetting statistics to original calculated values.")
+                                        
+                                        # Log current statistics before reset
+                                        log_message(logging.DEBUG, f"Current df_statistics keys before reset: {list(st.session_state.ga_optimizer['df_statistics'].keys())}")
+                                        
+                                        # Reset to original calculated values
+                                        original_stats = calculate_df_statistics(edited_df)
+                                        st.session_state.ga_optimizer['df_statistics'] = original_stats
+                                        # Reset revised statistics to match original
+                                        st.session_state.ga_optimizer['revised_df_statistics'] = original_stats.copy()
+                                        
+                                        # Clear the manual update flag
+                                        st.session_state.ga_optimizer['statistics_manually_updated'] = False
+                                        
+                                        # Log new statistics after reset
+                                        log_message(logging.DEBUG, f"Reset both original and revised df_statistics keys after reset: {list(st.session_state.ga_optimizer['df_statistics'].keys())}")
+                                        log_message(logging.INFO, "Statistics successfully reset to original calculated values. Manual update flag cleared.")
+                                        
+                                        st.success("Statistics reset to original calculated values.")
+                                        st.rerun()
+                                        
+                                    except Exception as e:
+                                        log_message(logging.ERROR, f"Error resetting statistics: {str(e)}")
+                                        st.error(f"Error resetting statistics: {str(e)}")
+                                        
+                                        # Log detailed error information
+                                        import traceback
+                                        log_message(logging.ERROR, f"Statistics reset error traceback: {traceback.format_exc()}")
                             
                             with col2:
                                 if st.button("Recalculate Z-Score", key="recalc_zscore"):
-                                    if 'edited_df' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['edited_df'] is not None:
-                                        if st.session_state.ga_optimizer['edited_df']['Productivity'].isnull().any() or (st.session_state.ga_optimizer['edited_df']['Productivity'] == "").any():
-                                            st.error("Please ensure all values in the 'Productivity' column are filled before recalculating Z-score.")
+                                    try:
+                                        log_message(logging.INFO, "Recalculating Z-score with updated statistics.")
+                                        
+                                        if 'edited_df' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['edited_df'] is not None:
+                                            if st.session_state.ga_optimizer['edited_df']['Productivity'].isnull().any() or (st.session_state.ga_optimizer['edited_df']['Productivity'] == "").any():
+                                                log_message(logging.WARNING, "Cannot recalculate Z-score: Productivity column has null/empty values.")
+                                                st.error("Please ensure all values in the 'Productivity' column are filled before recalculating Z-score.")
+                                            else:
+                                                # Get current statistics (revised if available, otherwise original)
+                                                current_stats = get_current_statistics()
+                                                log_message(logging.DEBUG, f"Using statistics with keys: {list(current_stats.keys())}")
+                                                
+                                                # Log the exact statistics being passed to zscore_data
+                                                if 'tee' in current_stats:
+                                                    log_message(logging.DEBUG, f"Recalc: Passing tee statistics to zscore_data: mean={current_stats['tee']['mean']:.6f}, std={current_stats['tee']['std']:.6f}")
+                                                
+                                                # Use the current statistics from session state
+                                                zscored_df = zscore_data(st.session_state.ga_optimizer['edited_df'], current_stats)
+                                                st.session_state.ga_optimizer['zscored_df'] = zscored_df
+                                                st.session_state.ga_optimizer['zscored_statistics'] = calculate_zscoredf_statistics(zscored_df)
+                                                st.session_state.ga_optimizer['show_zscore'] = True
+                                                
+                                                log_message(logging.INFO, f"Z-score recalculated successfully. New zscored_df shape: {zscored_df.shape}")
+                                                st.success("Z-scored data recalculated with updated statistics.")
+                                                st.rerun()
                                         else:
-                                            # Use the directly updated df_statistics from session state
-                                            zscored_df = zscore_data(st.session_state.ga_optimizer['edited_df'], st.session_state.ga_optimizer['df_statistics'])
-                                            st.session_state.ga_optimizer['zscored_df'] = zscored_df
-                                            st.session_state.ga_optimizer['zscored_statistics'] = calculate_zscoredf_statistics(zscored_df)
-                                            st.session_state.ga_optimizer['show_zscore'] = True
-                                            st.success("Z-scored data recalculated with updated statistics.")
-                                            st.rerun()
-                                    else:
-                                        st.error("No data available to recalculate Z-score.")
+                                            log_message(logging.ERROR, "No edited_df available for Z-score recalculation.")
+                                            st.error("No data available to recalculate Z-score.")
+                                            
+                                    except Exception as e:
+                                        log_message(logging.ERROR, f"Error recalculating Z-score: {str(e)}")
+                                        st.error(f"Error recalculating Z-score: {str(e)}")
+                                        
+                                        # Log detailed error information
+                                        import traceback
+                                        log_message(logging.ERROR, f"Z-score recalculation error traceback: {traceback.format_exc()}")
                         else:
                             st.warning("No statistics available. Please load data first.")
 
@@ -397,13 +568,51 @@ def ga_optimization_section():
                         if edited_df['Productivity'].isnull().any() or (edited_df['Productivity'] == "").any():
                             st.error("Please ensure all values in the 'Productivity' column are filled.")
                         else:
-                            # Use the directly updated df_statistics from session state
-                            zscored_df = zscore_data(edited_df, st.session_state.ga_optimizer['df_statistics'])
-                            st.session_state.ga_optimizer['zscored_df'] = zscored_df
-                            st.session_state.ga_optimizer['zscored_statistics'] = calculate_zscoredf_statistics(zscored_df)
-                            st.session_state.ga_optimizer['show_zscore'] = True
-                            st.success("Data has been Z-Scored using current statistics.")
-                            st.rerun()
+                            try:
+                                log_message(logging.INFO, "Z-Score Data button clicked.")
+                                
+                                # Get current statistics (revised if available, otherwise original)
+                                current_stats = get_current_statistics()
+                                log_message(logging.DEBUG, f"Using statistics with keys: {list(current_stats.keys())}")
+                                log_message(logging.DEBUG, f"Statistics manually updated flag: {st.session_state.ga_optimizer.get('statistics_manually_updated', False)}")
+                                
+                                # Log a sample of the statistics values for debugging
+                                if 'tee' in current_stats:
+                                    tee_stats = current_stats['tee']
+                                    log_message(logging.DEBUG, f"Sample tee statistics - mean: {tee_stats['mean']:.6f}, std: {tee_stats['std']:.6f}")
+                                    
+                                    # Log the entire tee statistics for detailed debugging
+                                    log_message(logging.DEBUG, f"Full tee statistics: {tee_stats}")
+                                    
+                                    # Check if this matches what we expect from manual update
+                                    expected_mean = 17028.272450  # From the logs
+                                    if abs(tee_stats['mean'] - expected_mean) > 0.001:
+                                        log_message(logging.ERROR, f"STATISTICS MISMATCH! Expected tee mean: {expected_mean}, Got: {tee_stats['mean']:.6f}")
+                                        log_message(logging.ERROR, f"Manual update flag: {st.session_state.ga_optimizer.get('statistics_manually_updated', False)}")
+                                    else:
+                                        log_message(logging.INFO, f"Statistics match expected values - manual update preserved correctly")
+                                
+                                # Log the exact statistics being passed to zscore_data
+                                if 'tee' in current_stats:
+                                    log_message(logging.DEBUG, f"Passing tee statistics to zscore_data: mean={current_stats['tee']['mean']:.6f}, std={current_stats['tee']['std']:.6f}")
+                                
+                                # Use the current statistics from session state
+                                zscored_df = zscore_data(edited_df, current_stats)
+                                st.session_state.ga_optimizer['zscored_df'] = zscored_df
+                                st.session_state.ga_optimizer['zscored_statistics'] = calculate_zscoredf_statistics(zscored_df)
+                                st.session_state.ga_optimizer['show_zscore'] = True
+                                
+                                log_message(logging.INFO, f"Z-score completed successfully. New zscored_df shape: {zscored_df.shape}")
+                                st.success("Data has been Z-Scored using current statistics.")
+                                st.rerun()
+                                
+                            except Exception as e:
+                                log_message(logging.ERROR, f"Error in Z-Score Data: {str(e)}")
+                                st.error(f"Error in Z-Score Data: {str(e)}")
+                                
+                                # Log detailed error information
+                                import traceback
+                                log_message(logging.ERROR, f"Z-Score Data error traceback: {traceback.format_exc()}")
 
                 if st.session_state.ga_optimizer['show_zscore']:
                     with tab2:
@@ -978,6 +1187,12 @@ def display_ga_results():
                     st.write("Model Sensitivity Analysis")
                     try:
                         import numpy as np  # Ensure numpy is available in this scope
+                        # Use zscored_statistics for sensitivity analysis (this should already reflect revised statistics if z-score was recalculated)
+                        log_message(logging.DEBUG, f"Model sensitivity analysis using zscored_statistics with keys: {list(st.session_state.ga_optimizer['zscored_statistics'].keys())}")
+                        if 'tee' in st.session_state.ga_optimizer['zscored_statistics']:
+                            tee_zscored_stats = st.session_state.ga_optimizer['zscored_statistics']['tee']
+                            log_message(logging.DEBUG, f"Model sensitivity analysis - tee zscored stats: mean={tee_zscored_stats['mean']:.6f}, std={tee_zscored_stats['std']:.6f}")
+                        
                         baseline_productivity, sensitivity_df = calculate_model_sensitivity(response_equation, st.session_state.ga_optimizer['zscored_statistics'])
                         
                         if baseline_productivity is not None and not np.isclose(baseline_productivity, 0, atol=1e-10):
@@ -1386,7 +1601,13 @@ def run_monotonicity_check(well_id, selected_stages, equation_to_use):
         if array_data is not None:
             if not isinstance(array_data, pd.DataFrame):
                 array_data = pd.DataFrame(array_data)
-            result_df = check_monotonicity_func(array_data, st.session_state.ga_optimizer['df_statistics'], equation_to_use)
+            # Use current statistics (revised if available, otherwise original) for monotonicity check
+            current_stats = get_current_statistics()
+            log_message(logging.DEBUG, f"Monotonicity check using statistics with keys: {list(current_stats.keys())}")
+            if 'tee' in current_stats:
+                log_message(logging.DEBUG, f"Monotonicity check using tee statistics: mean={current_stats['tee']['mean']:.6f}, std={current_stats['tee']['std']:.6f}")
+            
+            result_df = check_monotonicity_func(array_data, current_stats, equation_to_use)
             results[stage] = result_df
         else:
             st.warning(f"No data available for Stage {stage}. Skipping...")
@@ -1468,6 +1689,12 @@ def sensitivity_test_section():
         if st.button("Run General Sensitivity Analysis", key="run_general_sensitivity"):
             with st.spinner("Running General Sensitivity Analysis..."):
                 try:
+                    # Use zscored_statistics for sensitivity analysis (this should already reflect revised statistics if z-score was recalculated)
+                    log_message(logging.DEBUG, f"General sensitivity analysis using zscored_statistics with keys: {list(st.session_state.ga_optimizer['zscored_statistics'].keys())}")
+                    if 'tee' in st.session_state.ga_optimizer['zscored_statistics']:
+                        tee_zscored_stats = st.session_state.ga_optimizer['zscored_statistics']['tee']
+                        log_message(logging.DEBUG, f"General sensitivity analysis - tee zscored stats: mean={tee_zscored_stats['mean']:.6f}, std={tee_zscored_stats['std']:.6f}")
+                    
                     baseline_productivity, sensitivity_df = calculate_model_sensitivity(
                         equation_to_use, 
                         st.session_state.ga_optimizer['zscored_statistics']
@@ -1714,13 +1941,17 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
                     # Run stage processing in parallel using ThreadPoolExecutor
                     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
                         # Submit all tasks to the executor
+                        # Get current statistics (revised if available, otherwise original) for monotonicity range calculation
+                        current_stats = get_current_statistics()
+                        log_message(logging.DEBUG, f"Process stage data using statistics with keys: {list(current_stats.keys())}")
+                        
                         future_to_stage = {
                             executor.submit(
                                 process_stage_data, 
                                 well_id, 
                                 stage, 
                                 key_attributes, 
-                                st.session_state.ga_optimizer['df_statistics']
+                                current_stats
                             ): (well_id, stage) for well_id, stage in all_tasks
                         }
                         
@@ -1951,7 +2182,9 @@ def process_stage_data(well_id, stage, key_attributes, df_statistics):
                 array_data = pd.DataFrame(array_data)
             
             # Process array data to calculate stage metrics
-            result_df = check_monotonicity_func(array_data, df_statistics, "Corrected_Prod = 1")
+            # Use current statistics (revised if available, otherwise original) for monotonicity check
+            current_stats = get_current_statistics()
+            result_df = check_monotonicity_func(array_data, current_stats, "Corrected_Prod = 1")
             
             # Extract min/max values for key attributes
             for attr in key_attributes:

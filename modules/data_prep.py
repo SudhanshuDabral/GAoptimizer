@@ -369,8 +369,8 @@ def process_files(files, well_details):
             continue
         
 
-        # Filter by SlRate > 2
-        IndexS = np.where(SlRate > 2)[0]
+        # Filter by SlRate > 2 and treating pressure > 1000
+        IndexS = np.where((SlRate > 2) & (Pres > 1000))[0]
         T = T[IndexS]
         SlRate = SlRate[IndexS]
         Pres = Pres[IndexS]
@@ -379,7 +379,7 @@ def process_files(files, well_details):
         n = len(T)
         
         # Apply Butterworth denoising to pressure data (mimicking MATLAB implementation)
-        Pres, signal_denoised = apply_butterworth_denoising(Pres)
+        Pres, _ = apply_butterworth_denoising(Pres)
 
         WS = 11  # Window size, should always be odd
         MP = (WS + 1) // 2
