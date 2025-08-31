@@ -83,6 +83,14 @@ def initialize_ga_state():
             'num_models': 3,
             'selected_monotonic_attributes': ['downhole_ppm', 'total_dhppm', 'tee', 'med_energy_proxy', 'total_energy_proxy'],
             'statistics_manually_updated': False,  # Flag to track if statistics have been manually updated
+            # Feature Selection Settings
+            'drop_columns': [],
+            # Monotonicity Settings
+            'monotonicity_target': 0.9,  # 90% default
+            'range_selection_method': 'Use Database Wells',
+            'monotonicity_wells': [],
+            'manual_monotonicity_ranges': {},
+            'calculated_monotonicity_ranges': {},
         }
 
 def start_ga_optimization_callback():
@@ -664,32 +672,71 @@ def ga_optimization_section():
                         st.write(f"Number of datapoints selected for exclusion: {len(st.session_state.ga_optimizer['excluded_rows'])}")
 
                 with st.expander("Feature Selection"):
+                    # Get available columns for dropping (excluding essential columns)
+                    available_columns = [col for col in df.columns if col not in ['Productivity', 'stage', 'data_id', 'well_id', 'Well Name']]
+                    
+                    # Use session state for drop_columns with current value as default
+                    current_drop_columns = st.session_state.ga_optimizer.get('drop_columns', [])
+                    # Filter out any columns that might not exist in current dataframe
+                    valid_drop_columns = [col for col in current_drop_columns if col in available_columns]
+                    
                     drop_columns = st.multiselect("Select Columns to Drop",
-                                              [col for col in df.columns if col not in ['Productivity', 'stage', 'data_id', 'well_id', 'Well Name']],
+                                              available_columns,
+                                              default=valid_drop_columns,
                                               help="Choose columns that you do not want to include in the optimization process.")
+                    
+                    # Store in session state
+                    st.session_state.ga_optimizer['drop_columns'] = drop_columns
+                    
                     predictors = [col for col in df.columns if col not in ['Productivity', 'stage', 'Well Name', 'data_id', 'well_id'] and col not in drop_columns]
 
                 with st.expander("GA Optimizer Parameters", expanded=True):
-                    st.session_state.ga_optimizer['r2_threshold'] = st.number_input("R² Threshold", min_value=0.0, max_value=1.0, value=0.55,
-                                               help="Set the minimum R² value for model acceptance.")
-                    coef_range = st.slider("Coefficient Range", -20.0, 20.0, (-10.0, 10.0),
+                    st.session_state.ga_optimizer['r2_threshold'] = st.number_input("R² Threshold", min_value=0.0, max_value=1.0, 
+                                                                                   value=st.session_state.ga_optimizer.get('r2_threshold', 0.55),
+                                                                                   help="Set the minimum R² value for model acceptance.")
+                    
+                    # Coefficient Range - use session state
+                    current_coef_range = st.session_state.ga_optimizer.get('coef_range', (-10.0, 10.0))
+                    coef_range = st.slider("Coefficient Range", -20.0, 20.0, current_coef_range,
                                        help="Select the range for the model coefficients.")
-                    monotonicity_target = st.slider("Monotonicity Target (%)", min_value=0, max_value=100, value=90,
+                    st.session_state.ga_optimizer['coef_range'] = coef_range
+                    
+                    # Monotonicity Target - use session state
+                    current_monotonicity_target = int(st.session_state.ga_optimizer.get('monotonicity_target', 0.9) * 100)
+                    monotonicity_target = st.slider("Monotonicity Target (%)", min_value=0, max_value=100, value=current_monotonicity_target,
                                       help="Target percentage of monotonic behavior across features (higher values enforce more monotonic models)")
                     st.session_state.ga_optimizer['monotonicity_target'] = monotonicity_target / 100.0
-                    st.session_state.ga_optimizer['prob_crossover'] = st.number_input("Crossover Probability", min_value=0.0, max_value=1.0, value=0.8,
-                                             help="Set the probability of crossover during genetic algorithm.")
-                    st.session_state.ga_optimizer['prob_mutation'] = st.number_input("Mutation Probability", min_value=0.0, max_value=1.0, value=0.2,
-                                           help="Set the probability of mutation during genetic algorithm.")
-                    st.session_state.ga_optimizer['num_generations'] = st.number_input("Number of Generations", min_value=1, value=40,
-                                          help="Specify the number of generations for the genetic algorithm to run.")
-                    st.session_state.ga_optimizer['population_size'] = st.number_input("Population Size", min_value=1, value=50,
-                                          help="Set the size of the population for the genetic algorithm.")
-                    num_models = st.number_input("Number of Models to Generate", min_value=1, max_value=6, value=3,
-                                         help="Specify the number of models to generate that meet the R² threshold.")
+                    
+                    st.session_state.ga_optimizer['prob_crossover'] = st.number_input("Crossover Probability", min_value=0.0, max_value=1.0, 
+                                                                                     value=st.session_state.ga_optimizer.get('prob_crossover', 0.8),
+                                                                                     help="Set the probability of crossover during genetic algorithm.")
+                    
+                    st.session_state.ga_optimizer['prob_mutation'] = st.number_input("Mutation Probability", min_value=0.0, max_value=1.0, 
+                                                                                    value=st.session_state.ga_optimizer.get('prob_mutation', 0.2),
+                                                                                    help="Set the probability of mutation during genetic algorithm.")
+                    
+                    st.session_state.ga_optimizer['num_generations'] = st.number_input("Number of Generations", min_value=1, 
+                                                                                      value=st.session_state.ga_optimizer.get('num_generations', 40),
+                                                                                      help="Specify the number of generations for the genetic algorithm to run.")
+                    
+                    st.session_state.ga_optimizer['population_size'] = st.number_input("Population Size", min_value=1, 
+                                                                                      value=st.session_state.ga_optimizer.get('population_size', 50),
+                                                                                      help="Set the size of the population for the genetic algorithm.")
+                    
+                    # Number of Models - use session state
+                    num_models = st.number_input("Number of Models to Generate", min_value=1, max_value=6, 
+                                               value=st.session_state.ga_optimizer.get('num_models', 3),
+                                               help="Specify the number of models to generate that meet the R² threshold.")
+                    st.session_state.ga_optimizer['num_models'] = num_models
+                    
+                    # Regression Type - use session state for default selection
+                    current_regression_type = st.session_state.ga_optimizer.get('regression_type', 'FPR')
+                    regression_options = ["Full Polynomial Regression", "Linear with Interaction Parameters"]
+                    default_index = 0 if current_regression_type == 'FPR' else 1
+                    
                     regression_type = st.selectbox("Regression Type",
-                                               options=["Full Polynomial Regression", "Linear with Interaction Parameters"],
-                                               index=0,
+                                               options=regression_options,
+                                               index=default_index,
                                                help="Select the type of regression model to use in the optimization process.")
                     st.session_state.ga_optimizer['regression_type'] = 'FPR' if regression_type == "Full Polynomial Regression" else 'LWIP'
                     
@@ -704,13 +751,16 @@ def ga_optimization_section():
                         "total_energy_proxy", "total_energy_dissipated", "total_energy_ratio"
                     ]
                     
-                    # Set default selections - the original three key attributes plus key energy attributes
-                    default_selections = ["downhole_ppm", "total_dhppm", "tee", "med_energy_proxy", "total_energy_proxy"]
+                    # Use session state for monotonic attributes selection
+                    current_monotonic_attributes = st.session_state.ga_optimizer.get('selected_monotonic_attributes', 
+                                                                                    ["downhole_ppm", "total_dhppm", "tee", "med_energy_proxy", "total_energy_proxy"])
+                    # Filter out any attributes that might not exist in current dataframe
+                    valid_monotonic_attributes = [attr for attr in current_monotonic_attributes if attr in monotonicity_attributes]
                     
                     selected_monotonic_attributes = st.multiselect(
                         "Select Attributes for Monotonicity Check",
                         options=monotonicity_attributes,
-                        default=default_selections,
+                        default=valid_monotonic_attributes,
                         help="For these attributes, the model will enforce that productivity increases as the attribute increases"
                     )
                     
@@ -719,34 +769,72 @@ def ga_optimization_section():
                     if not selected_monotonic_attributes:
                         st.warning("No attributes selected for monotonicity check. The default attributes (downhole_ppm, total_dhppm, tee) will be used.")
                     
-                    # Add radio button for range selection method
+                    # Add radio button for range selection method - use session state
+                    current_range_method = st.session_state.ga_optimizer.get('range_selection_method', 'Use Database Wells')
+                    method_options = ["Use Database Wells", "Manual Range Input"]
+                    default_method_index = method_options.index(current_range_method) if current_range_method in method_options else 0
+                    
                     range_selection_method = st.radio(
                         "Select Range Determination Method",
-                        ["Use Database Wells", "Manual Range Input"],
+                        method_options,
+                        index=default_method_index,
                         key="monotonicity_range_method"
                     )
+                    st.session_state.ga_optimizer['range_selection_method'] = range_selection_method
                     
                     if range_selection_method == "Use Database Wells":
                         # Get available wells from database regardless of data source
                         wells = get_well_details()
                         well_options = {well['well_name']: well['well_id'] for well in wells}
                         
-                        # Set default selections safely - checking if selected_wells exists and is not empty
-                        default_selections = []
-                        if data_source == "Database":
-                            if 'selected_wells' in locals() and selected_wells:
-                                default_selections = selected_wells[:1]
-                            elif 'ga_optimizer' in st.session_state and 'selected_wells' in st.session_state.ga_optimizer and st.session_state.ga_optimizer['selected_wells']:
-                                default_selections = st.session_state.ga_optimizer['selected_wells'][:1]
+                        # Set default selections from session state
+                        current_monotonicity_wells = st.session_state.ga_optimizer.get('monotonicity_wells', [])
+                        # Convert well IDs back to well names for display
+                        default_well_names = []
+                        if current_monotonicity_wells:
+                            for well_id in current_monotonicity_wells:
+                                for well_name, w_id in well_options.items():
+                                    if w_id == well_id:
+                                        default_well_names.append(well_name)
+                                        break
+                            
+                            # Check if all wells are selected (for "Select All" functionality)
+                            if len(default_well_names) == len(well_options) and set(default_well_names) == set(well_options.keys()):
+                                default_well_names = ["Select All Wells"]
+                        
+                        # If no wells in session state, try to use selected_wells as fallback
+                        if not default_well_names:
+                            if data_source == "Database":
+                                if 'selected_wells' in locals() and selected_wells:
+                                    default_well_names = selected_wells[:1]
+                                elif st.session_state.ga_optimizer.get('selected_wells'):
+                                    default_well_names = st.session_state.ga_optimizer['selected_wells'][:1]
+                        
+                        # Add "Select All" option for wells
+                        all_wells_option = "Select All Wells"
+                        well_options_with_all = [all_wells_option] + list(well_options.keys())
                         
                         monotonicity_wells = st.multiselect(
                             "Select Wells for Monotonicity Check", 
-                            options=list(well_options.keys()), 
-                            default=default_selections,
-                            help="These wells will be used to determine the realistic range of attributes for monotonicity checking"
+                            options=well_options_with_all, 
+                            default=default_well_names,
+                            help="These wells will be used to determine the realistic range of attributes for monotonicity checking. Select 'Select All Wells' to include all available wells."
                         )
+                        
+                        # Handle "Select All" option
+                        if all_wells_option in monotonicity_wells:
+                            # If "Select All" is selected, use all wells (excluding the "Select All" option itself)
+                            monotonicity_wells = list(well_options.keys())
+                        
                         monotonicity_well_ids = [well_options[well] for well in monotonicity_wells]
                         st.session_state.ga_optimizer['monotonicity_wells'] = monotonicity_well_ids
+                        
+                        # Display selection info
+                        if len(monotonicity_wells) > 0:
+                            if len(monotonicity_wells) == len(well_options):
+                                st.info(f"✅ All {len(well_options)} wells selected for monotonicity range calculation")
+                            else:
+                                st.info(f"✅ {len(monotonicity_wells)} well(s) selected: {', '.join(monotonicity_wells[:3])}{'...' if len(monotonicity_wells) > 3 else ''}")
                         
                         if len(monotonicity_wells) == 0:
                             if data_source == "Database":
@@ -781,7 +869,10 @@ def ga_optimization_section():
                         st.write("Enter manual ranges for selected monotonicity attributes:")
                         
                         # Create columns for min and max inputs based on selected attributes
-                        attributes_to_show = selected_monotonic_attributes if selected_monotonic_attributes else default_selections
+                        attributes_to_show = selected_monotonic_attributes if selected_monotonic_attributes else ["downhole_ppm", "total_dhppm", "tee", "med_energy_proxy", "total_energy_proxy"]
+                        
+                        # Get existing manual ranges from session state
+                        existing_manual_ranges = st.session_state.ga_optimizer.get('manual_monotonicity_ranges', {})
                         
                         # Create a dictionary to store manual ranges
                         manual_ranges = {}
@@ -792,7 +883,9 @@ def ga_optimization_section():
                         with col1:
                             st.subheader("Minimum Values")
                             for attr in attributes_to_show:
-                                attr_min = st.number_input(f"{attr} Min", value=0.0, format="%.2f", key=f"min_{attr}")
+                                # Use existing value from session state or default to 0.0
+                                default_min = existing_manual_ranges.get(attr, {}).get('min', 0.0)
+                                attr_min = st.number_input(f"{attr} Min", value=default_min, format="%.2f", key=f"min_{attr}")
                                 if attr not in manual_ranges:
                                     manual_ranges[attr] = {}
                                 manual_ranges[attr]['min'] = attr_min
@@ -800,7 +893,9 @@ def ga_optimization_section():
                         with col2:
                             st.subheader("Maximum Values")
                             for attr in attributes_to_show:
-                                attr_max = st.number_input(f"{attr} Max", value=100.0, format="%.2f", key=f"max_{attr}")
+                                # Use existing value from session state or default to 100.0
+                                default_max = existing_manual_ranges.get(attr, {}).get('max', 100.0)
+                                attr_max = st.number_input(f"{attr} Max", value=default_max, format="%.2f", key=f"max_{attr}")
                                 if attr not in manual_ranges:
                                     manual_ranges[attr] = {}
                                 manual_ranges[attr]['max'] = attr_max
@@ -831,18 +926,18 @@ def ga_optimization_section():
                     if st.button("Start GA Optimization", key="toggle_button", on_click=start_ga_optimization_callback):
                         with st.spinner('Running Genetic Algorithm...'):
                             start_ga_optimization(st.session_state.ga_optimizer['zscored_df'], 'Productivity', predictors, st.session_state.ga_optimizer['r2_threshold'],
-                                                coef_range, st.session_state.ga_optimizer['prob_crossover'], st.session_state.ga_optimizer['prob_mutation'], 
+                                                st.session_state.ga_optimizer['coef_range'], st.session_state.ga_optimizer['prob_crossover'], st.session_state.ga_optimizer['prob_mutation'], 
                                                 st.session_state.ga_optimizer['num_generations'], st.session_state.ga_optimizer['population_size'],
                                                 st.session_state.ga_optimizer['excluded_rows'],
-                                                st.session_state.ga_optimizer['regression_type'], num_models,
+                                                st.session_state.ga_optimizer['regression_type'], st.session_state.ga_optimizer['num_models'],
                                                 st.session_state.ga_optimizer['monotonicity_target'])
 
                 if st.session_state.ga_optimizer['running']:
                     start_ga_optimization(st.session_state.ga_optimizer['zscored_df'], 'Productivity', predictors, st.session_state.ga_optimizer['r2_threshold'],
-                                          coef_range, st.session_state.ga_optimizer['prob_crossover'], st.session_state.ga_optimizer['prob_mutation'], 
+                                          st.session_state.ga_optimizer['coef_range'], st.session_state.ga_optimizer['prob_crossover'], st.session_state.ga_optimizer['prob_mutation'], 
                                           st.session_state.ga_optimizer['num_generations'], st.session_state.ga_optimizer['population_size'],
                                           st.session_state.ga_optimizer['excluded_rows'],
-                                          st.session_state.ga_optimizer['regression_type'], num_models,
+                                          st.session_state.ga_optimizer['regression_type'], st.session_state.ga_optimizer['num_models'],
                                           st.session_state.ga_optimizer['monotonicity_target'])
 
                 if st.session_state.ga_optimizer['results']:
@@ -1988,8 +2083,8 @@ def start_ga_optimization(df, target_column, predictors, r2_threshold, coef_rang
     
     # Process selected wells for monotonicity range determination
     monotonicity_ranges = None
-    if 'monotonicity_range_method' in st.session_state.ga_optimizer:
-        if st.session_state.ga_optimizer['monotonicity_range_method'] == "Manual Range Input":
+    if 'range_selection_method' in st.session_state.ga_optimizer:
+        if st.session_state.ga_optimizer['range_selection_method'] == "Manual Range Input":
             if 'manual_monotonicity_ranges' in st.session_state.ga_optimizer:
                 monotonicity_ranges = st.session_state.ga_optimizer['manual_monotonicity_ranges']
                 range_info = ", ".join([
